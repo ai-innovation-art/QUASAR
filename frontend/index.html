@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Code Editor</title>
+
+    <!-- xterm.js - MUST load BEFORE Monaco's AMD loader to avoid conflicts -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+
+    <!-- Lucide Icons - MUST load BEFORE Monaco's AMD loader -->
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.294.0/dist/umd/lucide.min.js"></script>
+
+    <!-- Monaco Editor Loader - loads LAST to avoid AMD conflicts with xterm and lucide -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="css/main.css">
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <i data-lucide="code-2"></i>
+                <span>AI Code Editor</span>
+            </div>
+        </div>
+        <div class="header-center">
+            <span class="current-file" id="currentFileName">Untitled</span>
+        </div>
+        <div class="header-right">
+            <button class="header-btn" id="saveBtn" title="Save (Ctrl+S)">
+                <i data-lucide="save"></i>
+                <span>Save</span>
+            </button>
+            <button class="header-btn primary" id="runBtn" title="Run (Ctrl+R)">
+                <i data-lucide="play"></i>
+                <span>Run</span>
+            </button>
+            <button class="header-btn" id="themeToggle" title="Toggle Theme">
+                <i data-lucide="moon"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-container">
+        <!-- Left Panel: File Tree -->
+        <aside class="panel file-tree-panel" id="fileTreePanel">
+            <div class="panel-header">
+                <span>Explorer</span>
+                <div class="panel-actions">
+                    <button class="icon-btn" id="newFileBtn" title="New File">
+                        <i data-lucide="file-plus"></i>
+                    </button>
+                    <button class="icon-btn" id="newFolderBtn" title="New Folder">
+                        <i data-lucide="folder-plus"></i>
+                    </button>
+                    <button class="icon-btn" id="refreshTreeBtn" title="Refresh">
+                        <i data-lucide="refresh-cw"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="panel-content" id="fileTree">
+                <!-- File tree will be rendered here -->
+                <div class="tree-placeholder">
+                    <i data-lucide="folder-open"></i>
+                    <p>No folder open</p>
+                    <button class="btn-secondary" id="openFolderBtn">Open Folder</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Resizer: File Tree <-> Editor -->
+        <div class="resizer resizer-vertical" id="resizerLeft"></div>
+
+        <!-- Center Panel: Editor + Terminal -->
+        <section class="panel editor-section">
+            <!-- Tab Bar -->
+            <div class="tab-bar" id="tabBar">
+                <div class="tabs" id="tabs">
+                    <!-- Tabs will be rendered here -->
+                </div>
+            </div>
+
+            <!-- Editor Container -->
+            <div class="editor-wrapper">
+                <div class="editor-container" id="editorContainer">
+                    <!-- Monaco Editor will be mounted here -->
+                </div>
+
+                <!-- Resizer: Editor <-> Terminal -->
+                <div class="resizer resizer-horizontal" id="resizerBottom"></div>
+
+                <!-- Terminal Container -->
+                <div class="terminal-wrapper" id="terminalWrapper">
+                    <div class="terminal-header">
+                        <span>Terminal</span>
+                        <div class="terminal-actions">
+                            <button class="icon-btn" id="clearTerminalBtn" title="Clear">
+                                <i data-lucide="trash-2"></i>
+                            </button>
+                            <button class="icon-btn" id="toggleTerminalBtn" title="Toggle Terminal">
+                                <i data-lucide="chevron-down"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="terminal-container" id="terminalContainer">
+                        <!-- xterm.js will be mounted here -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Resizer: Editor <-> Agent -->
+        <div class="resizer resizer-vertical" id="resizerRight"></div>
+
+        <!-- Right Panel: AI Agent -->
+        <aside class="panel agent-panel" id="agentPanel">
+            <div class="panel-header">
+                <span>AI Assistant</span>
+                <div class="panel-actions">
+                    <button class="icon-btn" id="clearChatBtn" title="Clear Chat">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                    <button class="icon-btn" id="toggleAgentBtn" title="Toggle Panel">
+                        <i data-lucide="panel-right-close"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="panel-content agent-content">
+                <!-- Chat Messages -->
+                <div class="chat-messages" id="chatMessages">
+                    <div class="welcome-message">
+                        <div class="welcome-icon">
+                            <i data-lucide="bot"></i>
+                        </div>
+                        <h3>AI Assistant</h3>
+                        <p>I can help you with:</p>
+                        <ul>
+                            <li><code>/explain</code> - Explain selected code</li>
+                            <li><code>/generate</code> - Generate code</li>
+                            <li><code>/fix</code> - Fix errors</li>
+                            <li><code>/refactor</code> - Improve code</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Chat Input -->
+                <div class="chat-input-wrapper">
+                    <div class="chat-input-container">
+                        <textarea id="chatInput" placeholder="Ask AI for help... (Shift+Enter for new line)"
+                            rows="1"></textarea>
+                        <button class="send-btn" id="sendBtn" title="Send">
+                            <i data-lucide="send"></i>
+                        </button>
+                    </div>
+                    <div class="chat-hint">
+                        <span class="model-indicator">
+                            <i data-lucide="cpu"></i>
+                            <span id="currentModel">Auto</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- Status Bar -->
+    <footer class="status-bar">
+        <div class="status-left">
+            <span class="status-item">
+                <i data-lucide="git-branch"></i>
+                <span>main</span>
+            </span>
+            <span class="status-item" id="statusLanguage">
+                Python
+            </span>
+        </div>
+        <div class="status-right">
+            <span class="status-item" id="statusPosition">
+                Ln 1, Col 1
+            </span>
+            <span class="status-item" id="statusEncoding">
+                UTF-8
+            </span>
+            <span class="status-item connected" id="statusConnection">
+                <i data-lucide="wifi"></i>
+                <span>Ready</span>
+            </span>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="js/config.js"></script>
+    <script src="js/fileTree.js"></script>
+    <script src="js/editor.js"></script>
+    <script src="js/terminal.js"></script>
+    <script src="js/agent.js"></script>
+    <script src="js/resizer.js"></script>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
