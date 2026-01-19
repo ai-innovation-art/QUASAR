@@ -52,6 +52,21 @@ class AgentManager {
             // Add response to UI
             if (response.success) {
                 this.addMessage('assistant', response.response);
+
+                // Auto-refresh file tree if files were modified
+                if (response.tools_used && response.tools_used.length > 0) {
+                    const fileModifyingTools = ['create_file', 'modify_file', 'delete_file'];
+                    const shouldRefresh = response.tools_used.some(tool =>
+                        fileModifyingTools.includes(tool)
+                    );
+
+                    if (shouldRefresh && window.fileTreeManager) {
+                        console.log('Auto-refreshing file tree after file modification');
+                        setTimeout(() => {
+                            window.fileTreeManager.loadFileTree();
+                        }, 500); // Small delay to ensure file is written
+                    }
+                }
             } else {
                 this.addMessage('assistant', `Error: ${response.error || 'Unknown error'}`);
             }
