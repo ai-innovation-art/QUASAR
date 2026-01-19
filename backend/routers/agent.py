@@ -70,6 +70,8 @@ class ChatResponse(BaseModel):
     model: str
     provider: str
     tools_used: Optional[list] = None
+    tool_calls_count: int = 0
+    iterations: int = 1
     error: Optional[str] = None
 
 
@@ -179,6 +181,8 @@ async def chat(request: ChatRequest):
             model=result.model_used,
             provider=result.provider,
             tools_used=result.tools_used,
+            tool_calls_count=result.tool_calls_count,
+            iterations=result.iterations,
             error=result.error
         )
         
@@ -343,7 +347,9 @@ async def websocket_agent(websocket: WebSocket):
                     "model": result.model_used,
                     "provider": result.provider,
                     "success": result.success,
-                    "tools_used": result.tools_used or []
+                    "tools_used": result.tools_used or [],
+                    "tool_calls_count": result.tool_calls_count,
+                    "iterations": result.iterations
                 })
                 
     except WebSocketDisconnect:

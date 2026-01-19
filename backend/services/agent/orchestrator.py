@@ -11,20 +11,26 @@ Uses LLM for intelligent task classification.
 """
 
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import json
 
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from .models.router import ModelRouter
 from .config import AgentConfig
-from .tools import get_tools_for_task, set_workspace
+from .tools import get_tools_for_task, set_workspace, ToolExecutor, has_tool_calls, get_tool_calls, ALL_TOOLS
 from .logger import (
     agent_logger,
     log_model_call,
     log_model_response,
     log_classification,
-    log_error
+    log_error,
+    log_tool_call,
+    log_tool_result,
+    log_agentic_start,
+    log_agentic_complete,
+    log_agentic_iteration,
+    log_agentic_max_iterations
 )
 
 
@@ -61,7 +67,9 @@ class AgentResponse:
     task_type: str
     model_used: str
     provider: str
-    tools_used: List[str] = None
+    tools_used: List[str] = field(default_factory=list)
+    tool_calls_count: int = 0
+    iterations: int = 1
     error: Optional[str] = None
 
 
@@ -344,7 +352,7 @@ class Orchestrator:
         2. Update context manager
         3. Get appropriate model
         4. Build context with token budgeting
-        5. Execute with tools
+        5. Execute with agentic tool loop (if applicable)
         6. Record conversation
         7. Return response
         """
@@ -373,6 +381,10 @@ class Orchestrator:
         
         # Build context messages using context manager data
         system_prompt = self._build_system_prompt(classification.task_type)
+        
+        # Add tool instructions if this task uses tools
+        if self._should_use_tools(classification.task_type.value):
+            system_prompt += self._get_tool_instructions()
         
         context_parts = []
         
@@ -406,13 +418,58 @@ class Orchestrator:
         # Record user message in context
         self.context_manager.add_message("user", query, classification.task_type.value)
         
-        # Execute with fallback support
-        agent_logger.info(f"🔄 Invoking model with fallback for task: {classification.task_type.value}")
+        # Determine if we should use the agentic loop with tools
+        use_tools = self._should_use_tools(classification.task_type.value)
+        
+        if use_tools:
+            # Execute with agentic tool loop
+            return await self._agentic_loop(
+                messages=messages,
+                task_type=classification.task_type.value
+            )
+        else:
+            # Simple invocation without tools
+            return await self._simple_invoke(
+                messages=messages,
+                task_type=classification.task_type.value
+            )
+    
+    def _should_use_tools(self, task_type: str) -> bool:
+        """Determine if this task type should use tools."""
+        return task_type in AgentConfig.TOOL_ENABLED_TASKS
+    
+    def _get_tool_instructions(self) -> str:
+        """Get instructions for the LLM about tool usage."""
+        return """
+
+You have access to tools to help complete the user's request.
+Use tools when needed to:
+- Read files to understand code
+- Create or modify files
+- Run commands to test code
+- Search for code patterns
+
+When using tools:
+1. Think about what you need before calling tools
+2. Use the appropriate tool for the task
+3. Analyze tool results before responding
+4. If a tool fails, try an alternative approach
+5. Provide a clear final response after completing tool operations
+
+After completing all necessary tool operations, provide your final response to the user.
+"""
+    
+    async def _simple_invoke(
+        self,
+        messages: list,
+        task_type: str
+    ) -> AgentResponse:
+        """Simple model invocation without tools."""
+        agent_logger.info(f"🔄 Simple invoke (no tools) for task: {task_type}")
         
         try:
-            # Use invoke_with_fallback for automatic fallback when model fails
             response, provider, model_name = await self.model_router.invoke_with_fallback(
-                task_type=classification.task_type.value,
+                task_type=task_type,
                 messages=messages
             )
             
@@ -421,7 +478,7 @@ class Orchestrator:
                 return AgentResponse(
                     success=False,
                     response="All models failed. Please check if Ollama is running with: ollama serve",
-                    task_type=classification.task_type.value,
+                    task_type=task_type,
                     model_used="none",
                     provider="none",
                     error="All models unavailable"
@@ -430,28 +487,201 @@ class Orchestrator:
             agent_logger.info(f"✅ Model response received: {provider}/{model_name}")
             
             # Record assistant response in context
-            self.context_manager.add_message("assistant", response.content[:500], classification.task_type.value)
+            self.context_manager.add_message("assistant", response.content[:500], task_type)
             
             return AgentResponse(
                 success=True,
                 response=response.content,
-                task_type=classification.task_type.value,
+                task_type=task_type,
                 model_used=model_name,
                 provider=provider,
-                tools_used=[]
+                tools_used=[],
+                tool_calls_count=0,
+                iterations=1
             )
             
         except Exception as e:
-            agent_logger.error(f"❌ invoke_with_fallback failed: {e}")
+            agent_logger.error(f"❌ Simple invoke failed: {e}")
             self.context_manager.record_error(str(e))
             return AgentResponse(
                 success=False,
                 response=f"Error: {str(e)}",
-                task_type=classification.task_type.value,
+                task_type=task_type,
                 model_used="unknown",
                 provider="unknown",
                 error=str(e)
             )
+    
+    async def _agentic_loop(
+        self,
+        messages: list,
+        task_type: str
+    ) -> AgentResponse:
+        """
+        Execute an agentic loop with tool calling.
+        
+        The loop:
+        1. Invokes the model with tools bound
+        2. If model returns tool calls, execute them
+        3. Add tool results to messages
+        4. Repeat until no more tool calls or max iterations
+        5. Return final response
+        """
+        # Get tools for this task type
+        tools = get_tools_for_task(task_type)
+        
+        log_agentic_start(task_type, len(tools))
+        
+        # Create tool executor
+        tool_executor = ToolExecutor(tools, timeout_seconds=AgentConfig.TOOL_TIMEOUT_SECONDS)
+        
+        # Get model for this task (we'll bind tools to it)
+        model = self.model_router.get_model(task_type)
+        
+        if model is None:
+            agent_logger.error("❌ No model available for agentic loop")
+            return AgentResponse(
+                success=False,
+                response="No model available. Please check if Ollama is running.",
+                task_type=task_type,
+                model_used="none",
+                provider="none",
+                error="No model available"
+            )
+        
+        # Get model info for logging
+        models_chain = AgentConfig.get_models_for_task(task_type)
+        if models_chain:
+            provider, model_key = models_chain[0]
+            provider_config = AgentConfig.get_provider(provider)
+            model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+        else:
+            provider = "unknown"
+            model_name = "unknown"
+        
+        # Bind tools to the model
+        try:
+            model_with_tools = model.bind_tools(tools)
+            agent_logger.info(f"🔧 Bound {len(tools)} tools to model {provider}/{model_name}")
+        except Exception as e:
+            agent_logger.warning(f"⚠️ Model doesn't support tool binding: {e}")
+            agent_logger.info("Falling back to simple invoke")
+            return await self._simple_invoke(messages, task_type)
+        
+        # Agentic loop
+        max_iterations = AgentConfig.MAX_TOOL_ITERATIONS
+        current_messages = list(messages)  # Copy messages
+        iteration = 0
+        
+        while iteration < max_iterations:
+            iteration += 1
+            agent_logger.info(f"🔄 Agentic loop iteration {iteration}/{max_iterations}")
+            
+            try:
+                # Invoke model with tools
+                response = await model_with_tools.ainvoke(current_messages)
+                
+                # Check if response has tool calls
+                if has_tool_calls(response):
+                    tool_calls = get_tool_calls(response)
+                    agent_logger.info(f"🔧 Model requested {len(tool_calls)} tool calls")
+                    
+                    # Log iteration with pending tool calls
+                    log_agentic_iteration(iteration, tool_executor.get_total_tool_calls(), has_more_calls=True)
+                    
+                    # Add the AI message with tool calls to conversation
+                    current_messages.append(response)
+                    
+                    # Execute tools
+                    tool_messages = await tool_executor.execute_tool_calls(tool_calls)
+                    
+                    # Add tool results to conversation
+                    current_messages.extend(tool_messages)
+                    
+                    # Continue loop to let model process tool results
+                    continue
+                else:
+                    # No tool calls - model has finished
+                    agent_logger.info(f"✅ Model finished without more tool calls")
+                    log_agentic_iteration(iteration, tool_executor.get_total_tool_calls(), has_more_calls=False)
+                    
+                    # Get execution summary
+                    summary = tool_executor.get_execution_summary()
+                    log_agentic_complete(iteration, summary["tools_used"], summary["total_calls"])
+                    
+                    # Record assistant response in context
+                    self.context_manager.add_message("assistant", response.content[:500], task_type)
+                    
+                    # Record files modified/created in session
+                    for tool_name in summary["tools_used"]:
+                        if tool_name == "create_file":
+                            # Would need to track specific files - for now just log
+                            pass
+                        elif tool_name == "modify_file":
+                            pass
+                    
+                    return AgentResponse(
+                        success=True,
+                        response=response.content,
+                        task_type=task_type,
+                        model_used=model_name,
+                        provider=provider,
+                        tools_used=summary["tools_used"],
+                        tool_calls_count=summary["total_calls"],
+                        iterations=iteration
+                    )
+                    
+            except Exception as e:
+                agent_logger.error(f"❌ Error in agentic loop iteration {iteration}: {e}")
+                self.context_manager.record_error(str(e))
+                
+                # If we had some successful tool calls, return partial result
+                summary = tool_executor.get_execution_summary()
+                if summary["total_calls"] > 0:
+                    return AgentResponse(
+                        success=False,
+                        response=f"Error during execution: {str(e)}. Completed {summary['total_calls']} tool calls before error.",
+                        task_type=task_type,
+                        model_used=model_name,
+                        provider=provider,
+                        tools_used=summary["tools_used"],
+                        tool_calls_count=summary["total_calls"],
+                        iterations=iteration,
+                        error=str(e)
+                    )
+                else:
+                    return AgentResponse(
+                        success=False,
+                        response=f"Error: {str(e)}",
+                        task_type=task_type,
+                        model_used=model_name,
+                        provider=provider,
+                        error=str(e)
+                    )
+        
+        # Max iterations reached
+        log_agentic_max_iterations(max_iterations, iteration)
+        summary = tool_executor.get_execution_summary()
+        
+        # Try to get final response from last message
+        last_ai_message = None
+        for msg in reversed(current_messages):
+            if isinstance(msg, AIMessage) and msg.content:
+                last_ai_message = msg
+                break
+        
+        final_response = last_ai_message.content if last_ai_message else "Maximum iterations reached. Task may be incomplete."
+        
+        return AgentResponse(
+            success=True,  # Partial success
+            response=final_response + f"\n\n[Note: Reached maximum {max_iterations} iterations]",
+            task_type=task_type,
+            model_used=model_name,
+            provider=provider,
+            tools_used=summary["tools_used"],
+            tool_calls_count=summary["total_calls"],
+            iterations=iteration
+        )
     
     def _build_system_prompt(self, task_type: TaskType) -> str:
         """Build system prompt based on task type."""

@@ -43,11 +43,14 @@ class AgentConfig:
         "ollama": ProviderConfig(
             name="ollama",
             enabled=True,
-            base_url="http://localhost:11434",
+            base_url="http://localhost:11434",  # Still uses Ollama API, but with cloud models
             models={
-                "chat": ModelConfig("qwen2.5-coder:7b", "ollama"),
-                "code": ModelConfig("qwen2.5-coder:32b", "ollama"),
-                "reasoning": ModelConfig("deepseek-r1:7b", "ollama"),
+                # Cloud models - no local download needed, just run: ollama run model:cloud
+                "chat": ModelConfig("qwen3-vl:235b-instruct-cloud", "ollama"),                              # Fast chat, tools support
+                "code": ModelConfig("glm-4.7:cloud", "ollama"),                         # GLM 4.7 cloud - tools+thinking, 198K context
+                "reasoning": ModelConfig("gpt-oss:20b-cloud", "ollama"),                # GPT-OSS for reasoning, tools+thinking
+                "agentic": ModelConfig("devstral-small-2:24b-cloud", "ollama"),         # Best for agentic tool calling
+                # "vision": ModelConfig("qwen3-vl:235b-instruct-cloud", "ollama"),        # Vision + 235B reasoning
             }
         ),
         "cerebras": ProviderConfig(
@@ -83,50 +86,51 @@ class AgentConfig:
     # Task to model mapping (configurable)
     # Format: task_type -> [(provider, model_key), ...]
     # First is primary, rest are fallbacks
+    # NOTE: All Ollama models are now cloud-based (no local download needed)
     TASK_MODELS: Dict[str, List[tuple]] = {
         "chat": [
-            ("ollama", "chat"),           # Primary: Local 7B
-            ("groq", "fast"),             # Fallback 1: Groq 8B
+            ("ollama", "chat"),           # Primary: qwen3:8b (cloud, fast)
+            ("groq", "fast"),             # Fallback: Groq 8B
         ],
         "code_explain_simple": [
-            ("ollama", "code"),           # Primary: Local 32B
+            ("ollama", "code"),           # Primary: glm-4.7:cloud
             ("groq", "versatile"),        # Fallback: Groq 70B
         ],
         "code_explain_complex": [
-            ("cerebras", "orchestrator"), # Primary: Cerebras 32B
-            ("groq", "versatile"),        # Fallback
-            ("ollama", "code"),           # Final fallback
+            ("ollama", "code"),           # Primary: glm-4.7:cloud (198K context)
+            ("cerebras", "orchestrator"), # Fallback: Cerebras 32B
+            ("groq", "versatile"),        # Final fallback
         ],
         "code_generation": [
-            ("ollama", "reasoning"),      # Primary: DeepSeek R1 local
-            ("cerebras", "code_gen"),     # Fallback: GLM-4.7
+            ("ollama", "code"),           # Primary: glm-4.7:cloud (tools+thinking)
+            ("cerebras", "code_gen"),     # Fallback: Cerebras GLM-4.7
             ("groq", "code"),             # Final fallback
         ],
         "code_generation_multi": [
-            ("cerebras", "complex"),      # Primary: Qwen3-235B
-            ("cerebras", "code_gen"),     # Fallback
-            ("ollama", "reasoning"),      # Final: Local
+            ("ollama", "agentic"),        # Primary: devstral-small-2 (built for multi-file)
+            ("cerebras", "complex"),      # Fallback: Qwen3-235B
+            ("ollama", "code"),           # Final: glm-4.7:cloud
         ],
         "bug_fixing": [
-            ("ollama", "code"),           # Primary: Local 32B
-            ("cerebras", "orchestrator"), # Fallback
+            ("ollama", "agentic"),        # Primary: devstral-small-2 (great for debugging)
+            ("ollama", "code"),           # Fallback: glm-4.7:cloud
             ("groq", "versatile"),        # Final
         ],
         "refactor": [
-            ("cerebras", "orchestrator"), # Primary
-            ("groq", "versatile"),        # Fallback
-            ("ollama", "reasoning"),      # Final
+            ("ollama", "code"),           # Primary: glm-4.7:cloud
+            ("cerebras", "orchestrator"), # Fallback
+            ("groq", "versatile"),        # Final
         ],
         "architecture": [
-            ("ollama", "reasoning"),      # Primary: DeepSeek R1
-            ("cerebras", "code_gen"),     # Fallback
+            ("ollama", "reasoning"),      # Primary: gpt-oss:20b (reasoning+thinking)
+            ("cerebras", "complex"),      # Fallback: Qwen3-235B
         ],
         "test_generation": [
-            ("ollama", "code"),           # Primary: Local 32B
+            ("ollama", "code"),           # Primary: glm-4.7:cloud
             ("groq", "versatile"),        # Fallback
         ],
         "documentation": [
-            ("ollama", "chat"),           # Primary: Local 7B (simple task)
+            ("ollama", "chat"),           # Primary: qwen3:8b (fast, simple task)
             ("groq", "fast"),             # Fallback
         ],
     }
@@ -136,6 +140,30 @@ class AgentConfig:
     DEFAULT_MAX_TOKENS = 4096
     MAX_RETRIES = 3
     TIMEOUT_SECONDS = 60
+    
+    # Agentic Loop Configuration
+    MAX_TOOL_ITERATIONS = 10          # Max tool call loops per request
+    TOOL_TIMEOUT_SECONDS = 30         # Timeout per individual tool execution
+    MAX_TOOL_RESULT_LENGTH = 5000     # Truncate tool results beyond this
+    ENABLE_TOOL_CONFIRMATION = False  # Require user confirmation for dangerous ops
+    
+    # Task types that should use tools
+    TOOL_ENABLED_TASKS = [
+        "code_generation",
+        "code_generation_multi",
+        "bug_fixing",
+        "refactor",
+        "test_generation",
+        "architecture",
+        "code_explain_simple",        # Added - needs read_file tool
+        "code_explain_complex",
+    ]
+    
+    # Tasks that are read-only (can't modify/create files) - only chat and docs
+    READ_ONLY_TASKS = [
+        "chat",
+        "documentation",
+    ]
     
     @classmethod
     def get_models_for_task(cls, task_type: str) -> List[tuple]:

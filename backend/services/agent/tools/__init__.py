@@ -26,6 +26,13 @@ from .terminal_tools import (
     check_command_available
 )
 
+from .executor import (
+    ToolExecutor,
+    ToolExecutionResult,
+    has_tool_calls,
+    get_tool_calls
+)
+
 
 # All tools combined
 ALL_TOOLS = FILE_TOOLS + TERMINAL_TOOLS

@@ -167,7 +167,7 @@ Editor/
 - [x] Phase 3: Orchestrator + Specialists
 - [x] Phase 4: Context Management
 - [x] Phase 5: Frontend Integration
-- [ ] Phase 6: Agentic Tool Calling Loop
+- [x] Phase 6: Agentic Tool Calling Loop
 - [ ] Phase 7: Streaming Responses
 - [ ] Phase 8: RAG for Large Projects
 

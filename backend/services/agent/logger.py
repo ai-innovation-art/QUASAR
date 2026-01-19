@@ -101,3 +101,56 @@ def log_api_response(endpoint: str, success: bool, response_summary: str = None)
     agent_logger.info(f"📤 API Response: {endpoint} - {status}")
     if response_summary:
         agent_logger.debug(f"Summary: {response_summary}")
+
+
+# ============================================
+# Tool Execution Logging (Agentic Loop)
+# ============================================
+
+def log_tool_call(tool_name: str, args: dict = None):
+    """Log when a tool is being called."""
+    agent_logger.info(f"🔧 Tool Call: {tool_name}")
+    if args:
+        # Truncate long args for readability
+        args_str = str(args)[:200]
+        agent_logger.debug(f"   Args: {args_str}")
+
+
+def log_tool_result(tool_name: str, success: bool, result_summary: str = None, duration_ms: float = 0):
+    """Log tool execution result."""
+    status = "✅" if success else "❌"
+    duration_str = f" ({duration_ms:.1f}ms)" if duration_ms > 0 else ""
+    agent_logger.info(f"   {status} Tool {tool_name} completed{duration_str}")
+    if result_summary:
+        agent_logger.debug(f"   Result: {result_summary[:200]}...")
+
+
+def log_tool_error(tool_name: str, error: str):
+    """Log tool execution error."""
+    agent_logger.error(f"   ❌ Tool {tool_name} error: {error}")
+
+
+def log_agentic_iteration(iteration: int, total_tool_calls: int, has_more_calls: bool):
+    """Log agentic loop iteration."""
+    if has_more_calls:
+        agent_logger.info(f"🔄 Agentic Loop - Iteration {iteration}: {total_tool_calls} tool calls, continuing...")
+    else:
+        agent_logger.info(f"✅ Agentic Loop - Iteration {iteration}: Complete ({total_tool_calls} total tool calls)")
+
+
+def log_agentic_start(task_type: str, tools_count: int):
+    """Log start of agentic execution."""
+    agent_logger.info(f"🚀 Starting agentic execution for '{task_type}' with {tools_count} tools available")
+
+
+def log_agentic_complete(iterations: int, tools_used: list, total_calls: int):
+    """Log completion of agentic execution."""
+    tools_summary = ", ".join(tools_used) if tools_used else "none"
+    agent_logger.info(f"✅ Agentic execution complete: {iterations} iterations, {total_calls} tool calls")
+    agent_logger.debug(f"   Tools used: {tools_summary}")
+
+
+def log_agentic_max_iterations(max_iterations: int, current_iteration: int):
+    """Log when max iterations reached."""
+    agent_logger.warning(f"⚠️ Max iterations ({max_iterations}) reached at iteration {current_iteration}. Stopping loop.")
+

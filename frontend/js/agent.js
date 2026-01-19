@@ -72,7 +72,7 @@ class AgentManager {
 
         const body = {
             query: message,
-            workspace: window.CONFIG?.WORKSPACE || '',
+            workspace: window.fileTreeManager?.rootPath || null,  // Use opened folder, not CONFIG
             current_file: context.filePath || null,
             file_content: context.fileContent || null,
             selected_code: context.selection || null,
