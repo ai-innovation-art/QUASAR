@@ -40,10 +40,6 @@ class FileTreeManager {
             this.lastTreeHash = this.getTreeHash(data.tree);  // Initialize hash
             this.render();
 
-            // Update status bar with workspace name
-            const workspaceName = this.rootPath.split(/[\\/]/).pop();
-            document.querySelector('.logo span').textContent = workspaceName || 'AI Code Editor';
-
             // Start polling for real-time updates
             this.startPolling();
 
@@ -80,10 +76,6 @@ class FileTreeManager {
             this.fileTree = data.tree;
             this.lastTreeHash = this.getTreeHash(data.tree);  // Initialize hash
             this.render();
-
-            // Update workspace name in header
-            const workspaceName = this.rootPath.split(/[\\/]/).pop();
-            document.querySelector('.logo span').textContent = workspaceName || 'AI Code Editor';
 
             console.log('✅ Opened folder:', this.rootPath);
 

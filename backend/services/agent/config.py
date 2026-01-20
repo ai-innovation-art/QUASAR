@@ -71,7 +71,7 @@ class AgentConfig:
                 "fast": ModelConfig("llama-3.1-8b-instant", "groq"),
                 "versatile": ModelConfig("llama-3.3-70b-versatile", "groq"),
                 "code": ModelConfig("llama-3.1-70b-versatile", "groq"),
-                "reasoning": ModelConfig("gpt-oss:120b", "groq"),  # GPT-OSS 120B for complex reasoning
+                "reasoning": ModelConfig("gpt-oss-120b", "groq"),  # GPT-OSS 120B for complex reasoning
             }
         ),
         "cloudflare": ProviderConfig(
@@ -113,9 +113,9 @@ class AgentConfig:
         
         # Task 4: Code Generation (Function/Class)
         "code_generation": [
-            ("ollama", "code"),              # Primary: glm-4.7:cloud
-            ("cerebras", "code_gen"),        # Fallback 1: zai-glm-4.7
-            ("groq", "reasoning"),           # Fallback 2: gpt-oss-120b
+            ("groq", "reasoning"),           # Primary: gpt-oss-120b
+            ("ollama", "code"),              # Fallback 1: glm-4.7:cloud
+            ("cerebras", "code_gen"),        # Fallback 2: zai-glm-4.7
         ],
         
         # Task 5: Code Generation (Multi-file/Module)
@@ -168,7 +168,7 @@ class AgentConfig:
     TIMEOUT_SECONDS = 60
     
     # Agentic Loop Configuration
-    MAX_TOOL_ITERATIONS = 15          # Max tool call loops per request (increased for complex tasks)
+    MAX_TOOL_ITERATIONS = 30          # Max tool call loops per request (increased for complex tasks)
     TOOL_TIMEOUT_SECONDS = 30         # Timeout per individual tool execution
     MAX_TOOL_RESULT_LENGTH = 5000     # Truncate tool results beyond this
     ENABLE_TOOL_CONFIRMATION = False  # Require user confirmation for dangerous ops
@@ -183,11 +183,11 @@ class AgentConfig:
         "architecture",
         "code_explain_simple",        # Added - needs read_file tool
         "code_explain_complex",
+        "chat",
     ]
     
     # Tasks that are read-only (can't modify/create files) - only chat and docs
     READ_ONLY_TASKS = [
-        "chat",
         "documentation",
     ]
     
