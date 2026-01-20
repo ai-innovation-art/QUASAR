@@ -8,6 +8,10 @@ class AgentManager {
         this.messages = [];
         this.isLoading = false;
         this.currentModel = 'auto';
+        this.streamingEnabled = true;  // Enable streaming by default
+        this.currentStreamingElement = null;  // Track streaming message element
+        this.currentEventSource = null;  // Track EventSource for cancellation
+        this.currentAbortController = null;  // For stopping streaming
     }
 
     /**
@@ -39,38 +43,42 @@ class AgentManager {
             // Build context from editor
             const context = this.buildContext();
 
-            // Call backend API
-            const response = await this.callBackendAPI(message, context);
-
-            // Update model indicator
-            if (response.model && response.model !== 'unknown') {
-                this.setModel(`${response.provider}/${response.model}`);
-            } else if (response.provider) {
-                this.setModel(response.provider);
-            }
-
-            // Add response to UI
-            if (response.success) {
-                this.addMessage('assistant', response.response);
-
-                // Auto-refresh file tree if files were modified
-                if (response.tools_used && response.tools_used.length > 0) {
-                    const fileModifyingTools = ['create_file', 'modify_file', 'delete_file'];
-                    const shouldRefresh = response.tools_used.some(tool =>
-                        fileModifyingTools.includes(tool)
-                    );
-
-                    if (shouldRefresh && window.fileTreeManager) {
-                        console.log('Auto-refreshing file tree after file modification');
-                        setTimeout(() => {
-                            window.fileTreeManager.loadFileTree();
-                        }, 500); // Small delay to ensure file is written
-                    }
-                }
+            // Use streaming if enabled
+            if (this.streamingEnabled) {
+                await this.sendMessageStream(message, context);
             } else {
-                this.addMessage('assistant', `Error: ${response.error || 'Unknown error'}`);
-            }
+                // Fallback to regular API
+                const response = await this.callBackendAPI(message, context);
 
+                // Update model indicator
+                if (response.model && response.model !== 'unknown') {
+                    this.setModel(`${response.provider}/${response.model}`);
+                } else if (response.provider) {
+                    this.setModel(response.provider);
+                }
+
+                // Add response to UI
+                if (response.success) {
+                    this.addMessage('assistant', response.response);
+
+                    // Auto-refresh file tree if files were modified
+                    if (response.tools_used && response.tools_used.length > 0) {
+                        const fileModifyingTools = ['create_file', 'modify_file', 'delete_file'];
+                        const shouldRefresh = response.tools_used.some(tool =>
+                            fileModifyingTools.includes(tool)
+                        );
+
+                        if (shouldRefresh && window.fileTreeManager) {
+                            console.log('Auto-refreshing file tree after file modification');
+                            setTimeout(() => {
+                                window.fileTreeManager.loadFileTree();
+                            }, 500); // Small delay to ensure file is written
+                        }
+                    }
+                } else {
+                    this.addMessage('assistant', `Error: ${response.error || 'Unknown error'}`);
+                }
+            }
         } catch (error) {
             console.error('Agent error:', error);
             this.addMessage('assistant', `Sorry, I encountered an error: ${error.message}`);
@@ -107,6 +115,264 @@ class AgentManager {
         }
 
         return await response.json();
+    }
+
+    /**
+     * Send message with streaming response (SSE)
+     */
+    async sendMessageStream(message, context) {
+        const baseUrl = window.CONFIG?.API_URL || 'http://localhost:8000';
+
+        const body = {
+            query: message,
+            workspace: window.fileTreeManager?.rootPath || null,
+            current_file: context.filePath || null,
+            file_content: context.fileContent || null,
+            selected_code: context.selection || null,
+            terminal_output: window.terminalManager?.getLastOutput?.() || null
+        };
+
+        // Create streaming message placeholder
+        this.createStreamingMessage();
+
+        // Create abort controller for cancellation
+        this.currentAbortController = new AbortController();
+
+        try {
+            const response = await fetch(`${baseUrl}/api/agent/chat/stream`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body),
+                signal: this.currentAbortController.signal
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            // Read the stream
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let currentContent = '';
+            let toolsUsed = [];
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Process SSE events (lines starting with "data: ")
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            this.handleStreamEvent(data, currentContent, toolsUsed);
+
+                            if (data.type === 'token' && data.content) {
+                                currentContent += data.content;
+                                this.updateStreamingMessage(currentContent);
+                            } else if (data.type === 'tool_complete') {
+                                if (data.tool && !toolsUsed.includes(data.tool)) {
+                                    toolsUsed.push(data.tool);
+                                }
+                            } else if (data.type === 'done') {
+                                this.finalizeStreamingMessage(currentContent);
+
+                                // Update model indicator
+                                if (data.model) {
+                                    this.setModel(`${data.provider}/${data.model}`);
+                                }
+
+                                // Auto-refresh file tree if files were modified
+                                if (toolsUsed.length > 0) {
+                                    const fileModifyingTools = ['create_file', 'modify_file', 'delete_file'];
+                                    const shouldRefresh = toolsUsed.some(tool => fileModifyingTools.includes(tool));
+                                    if (shouldRefresh && window.fileTreeManager) {
+                                        console.log('Auto-refreshing file tree after streaming');
+                                        setTimeout(() => window.fileTreeManager.loadFileTree(), 500);
+                                    }
+                                }
+                            } else if (data.type === 'error') {
+                                this.finalizeStreamingMessage(`Error: ${data.message}`);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to parse SSE event:', e);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Streaming error:', error);
+            this.finalizeStreamingMessage(`Error: ${error.message}`);
+        }
+    }
+
+    /**
+     * Create streaming message placeholder
+     */
+    createStreamingMessage() {
+        // Remove welcome message if present
+        const welcome = document.querySelector('.welcome-message');
+        if (welcome) welcome.remove();
+
+        const messagesContainer = document.getElementById('chatMessages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'chat-message assistant streaming';
+        messageDiv.id = 'streamingMessage';
+        messageDiv.innerHTML = `
+            <div class="streaming-actions">
+                <button class="stop-streaming-btn" title="Stop generating">
+                    ⏹ Stop
+                </button>
+            </div>
+            <div class="message-content streaming-content">
+                <span class="streaming-cursor">▊</span>
+            </div>
+        `;
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+        // Add stop button handler
+        const stopBtn = messageDiv.querySelector('.stop-streaming-btn');
+        stopBtn.addEventListener('click', () => this.stopStreaming());
+
+        // Remove typing indicator if present
+        document.getElementById('typingIndicator')?.remove();
+
+        this.currentStreamingElement = messageDiv;
+    }
+
+    /**
+     * Stop current streaming response
+     */
+    stopStreaming() {
+        if (this.currentAbortController) {
+            this.currentAbortController.abort();
+            this.currentAbortController = null;
+            console.log('⏹ Streaming stopped by user');
+
+            // Finalize with current content
+            const contentEl = this.currentStreamingElement?.querySelector('.message-content');
+            if (contentEl) {
+                const currentText = contentEl.textContent.replace('▊', '');
+                this.finalizeStreamingMessage(currentText + '\n\n[Stopped by user]');
+            }
+        }
+    }
+
+    /**
+     * Update streaming message with new content
+     */
+    updateStreamingMessage(content) {
+        if (!this.currentStreamingElement) return;
+
+        const contentEl = this.currentStreamingElement.querySelector('.message-content');
+        if (contentEl) {
+            const formattedContent = this.formatMessage(content);
+            contentEl.innerHTML = formattedContent + '<span class="streaming-cursor">▊</span>';
+
+            // Auto-scroll
+            const messagesContainer = document.getElementById('chatMessages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+    }
+
+    /**
+     * Handle different stream event types
+     */
+    handleStreamEvent(data, currentContent, toolsUsed) {
+        switch (data.type) {
+            case 'classification':
+                console.log(`📋 Task: ${data.task_type} (confidence: ${data.confidence})`);
+                break;
+            case 'iteration':
+                console.log(`🔄 Iteration ${data.current}/${data.max}`);
+                break;
+            case 'tool_start':
+                console.log(`🔧 Starting tool: ${data.tool}`);
+                this.showToolIndicator(data.tool);
+                break;
+            case 'tool_complete':
+                console.log(`✅ Tool complete: ${data.tool}`);
+                this.hideToolIndicator(data.tool);
+                break;
+        }
+    }
+
+    /**
+     * Show tool execution indicator
+     */
+    showToolIndicator(toolName) {
+        if (!this.currentStreamingElement) return;
+
+        const indicator = document.createElement('div');
+        indicator.className = 'tool-indicator';
+        indicator.id = `tool-${toolName}`;
+        indicator.innerHTML = `⚙️ Running: ${toolName}...`;
+
+        const contentEl = this.currentStreamingElement.querySelector('.message-content');
+        contentEl.insertAdjacentElement('beforebegin', indicator);
+    }
+
+    /**
+     * Hide tool execution indicator
+     */
+    hideToolIndicator(toolName) {
+        const indicator = document.getElementById(`tool-${toolName}`);
+        if (indicator) {
+            indicator.innerHTML = `✅ ${toolName}`;
+            setTimeout(() => indicator.remove(), 1000);
+        }
+    }
+
+    /**
+     * Finalize streaming message
+     */
+    finalizeStreamingMessage(content) {
+        if (!this.currentStreamingElement) return;
+
+        this.currentStreamingElement.classList.remove('streaming');
+        const contentEl = this.currentStreamingElement.querySelector('.message-content');
+
+        if (contentEl) {
+            contentEl.classList.remove('streaming-content');
+            const formattedContent = this.formatMessage(content);
+            contentEl.innerHTML = formattedContent;
+
+            // Add action buttons
+            const actionsDiv = document.createElement('div');
+            actionsDiv.className = 'message-actions';
+            actionsDiv.innerHTML = `
+                <button data-action="copy">Copy</button>
+                <button data-action="insert">Insert</button>
+            `;
+            contentEl.parentElement.appendChild(actionsDiv);
+
+            // Add handlers
+            actionsDiv.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const action = btn.dataset.action;
+                    const code = this.extractCode(content);
+                    if (action === 'copy') {
+                        navigator.clipboard.writeText(code || content);
+                    } else if (action === 'insert' && code) {
+                        window.editorManager?.insertAtCursor(code);
+                    }
+                });
+            });
+        }
+
+        // Store in messages
+        this.messages.push({ role: 'assistant', content, timestamp: new Date() });
+
+        this.currentStreamingElement = null;
     }
 
     /**

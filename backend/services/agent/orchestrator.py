@@ -10,7 +10,7 @@ The main coordinator that:
 Uses LLM for intelligent task classification.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, AsyncGenerator
 from dataclasses import dataclass, field
 from enum import Enum
 import json
@@ -682,6 +682,264 @@ After completing all necessary tool operations, provide your final response to t
             tool_calls_count=summary["total_calls"],
             iterations=iteration
         )
+    
+    async def process_stream(
+        self,
+        query: str,
+        current_file: str = None,
+        file_content: str = None,
+        selected_code: str = None,
+        terminal_output: str = None,
+        error_message: str = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Process a user query with streaming responses.
+        
+        Yields SSE events:
+        - classification: Task classification result
+        - token: Individual response tokens
+        - tool_start: Tool execution starting
+        - tool_complete: Tool execution completed
+        - done: Final completion signal
+        """
+        # Update task context
+        self.context_manager.set_task_context(
+            current_file=current_file,
+            file_content=file_content,
+            selected_code=selected_code,
+            error_message=error_message,
+            terminal_output=terminal_output
+        )
+        
+        # Classify the task
+        has_error = bool(error_message or (terminal_output and "error" in terminal_output.lower()))
+        
+        classification = await self.classify_task(
+            query=query,
+            current_file=current_file,
+            has_selection=bool(selected_code),
+            has_error=has_error
+        )
+        
+        # Yield classification result
+        yield {
+            "type": "classification",
+            "task_type": classification.task_type.value,
+            "confidence": classification.confidence
+        }
+        
+        # Build context and messages
+        context_data = self.context_manager.get_context_for_task(classification.task_type.value)
+        system_prompt = self._build_system_prompt(classification.task_type)
+        
+        if self._should_use_tools(classification.task_type.value):
+            system_prompt += self._get_tool_instructions()
+        
+        context_parts = []
+        if context_data["permanent"]:
+            context_parts.append(context_data["permanent"])
+        if context_data["task"]:
+            context_parts.append(context_data["task"])
+        if context_data["summary"]:
+            context_parts.append(context_data["summary"])
+        if context_data["session"]:
+            context_parts.append(context_data["session"])
+        
+        context = "\n\n".join(context_parts) if context_parts else ""
+        user_message = f"{context}\n\nUser request: {query}" if context else query
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_message)
+        ]
+        
+        self.context_manager.add_message("user", query, classification.task_type.value)
+        
+        use_tools = self._should_use_tools(classification.task_type.value)
+        
+        if use_tools:
+            # Streaming agentic loop
+            async for chunk in self._agentic_loop_stream(
+                messages=messages,
+                task_type=classification.task_type.value
+            ):
+                yield chunk
+        else:
+            # Simple streaming without tools
+            async for chunk in self._simple_stream(
+                messages=messages,
+                task_type=classification.task_type.value
+            ):
+                yield chunk
+    
+    async def _simple_stream(
+        self,
+        messages: list,
+        task_type: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Simple streaming invocation without tools."""
+        agent_logger.info(f"🔄 Simple stream (no tools) for task: {task_type}")
+        
+        model = self.model_router.get_model(task_type)
+        
+        if model is None:
+            yield {"type": "error", "message": "No model available"}
+            return
+        
+        # Get model info for response
+        models_chain = AgentConfig.get_models_for_task(task_type)
+        if models_chain:
+            provider, model_key = models_chain[0]
+            provider_config = AgentConfig.get_provider(provider)
+            model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+        else:
+            provider = "unknown"
+            model_name = "unknown"
+        
+        try:
+            full_response = ""
+            
+            # Stream tokens using astream
+            async for chunk in model.astream(messages):
+                token = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                if token:
+                    full_response += token
+                    yield {"type": "token", "content": token}
+            
+            agent_logger.info(f"✅ Stream complete: {provider}/{model_name}")
+            
+            # Record in context
+            self.context_manager.add_message("assistant", full_response[:500], task_type)
+            
+            yield {
+                "type": "done",
+                "model": model_name,
+                "provider": provider,
+                "task_type": task_type,
+                "iterations": 1,
+                "tool_calls_count": 0
+            }
+            
+        except Exception as e:
+            agent_logger.error(f"❌ Simple stream error: {e}")
+            yield {"type": "error", "message": str(e)}
+    
+    async def _agentic_loop_stream(
+        self,
+        messages: list,
+        task_type: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Streaming agentic loop with tool calling."""
+        tools = get_tools_for_task(task_type)
+        log_agentic_start(task_type, len(tools))
+        
+        tool_executor = ToolExecutor(tools, timeout_seconds=AgentConfig.TOOL_TIMEOUT_SECONDS)
+        model = self.model_router.get_model(task_type)
+        
+        if model is None:
+            yield {"type": "error", "message": "No model available"}
+            return
+        
+        # Get model info
+        models_chain = AgentConfig.get_models_for_task(task_type)
+        if models_chain:
+            provider, model_key = models_chain[0]
+            provider_config = AgentConfig.get_provider(provider)
+            model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+        else:
+            provider = "unknown"
+            model_name = "unknown"
+        
+        # Bind tools
+        try:
+            model_with_tools = model.bind_tools(tools)
+            agent_logger.info(f"🔧 Bound {len(tools)} tools to model for streaming")
+        except Exception as e:
+            agent_logger.warning(f"⚠️ Tool binding failed: {e}")
+            async for chunk in self._simple_stream(messages, task_type):
+                yield chunk
+            return
+        
+        max_iterations = AgentConfig.MAX_TOOL_ITERATIONS
+        current_messages = list(messages)
+        iteration = 0
+        
+        while iteration < max_iterations:
+            iteration += 1
+            agent_logger.info(f"🔄 Streaming agentic loop iteration {iteration}/{max_iterations}")
+            
+            yield {"type": "iteration", "current": iteration, "max": max_iterations}
+            
+            try:
+                # Collect full response (can't stream when checking for tool calls)
+                response = await model_with_tools.ainvoke(current_messages)
+                
+                if has_tool_calls(response):
+                    tool_calls = get_tool_calls(response)
+                    agent_logger.info(f"🔧 Model requested {len(tool_calls)} tool calls")
+                    
+                    current_messages.append(response)
+                    
+                    # Execute tools and yield progress
+                    for tool_call in tool_calls:
+                        tool_name = tool_call.get("name", "") if isinstance(tool_call, dict) else getattr(tool_call, "name", "")
+                        
+                        yield {"type": "tool_start", "tool": tool_name}
+                        
+                        # Execute single tool
+                        tool_messages = await tool_executor.execute_tool_calls([tool_call])
+                        current_messages.extend(tool_messages)
+                        
+                        # Get result for yield
+                        result = tool_messages[0].content if tool_messages else "completed"
+                        yield {"type": "tool_complete", "tool": tool_name, "result": result[:200]}
+                    
+                    continue
+                else:
+                    # No tool calls - stream the final response text
+                    if response.content:
+                        # Yield content in chunks for smoother streaming
+                        content = response.content
+                        chunk_size = 10  # Characters per chunk
+                        for i in range(0, len(content), chunk_size):
+                            yield {"type": "token", "content": content[i:i+chunk_size]}
+                    
+                    summary = tool_executor.get_execution_summary()
+                    log_agentic_complete(iteration, summary["tools_used"], summary["total_calls"])
+                    
+                    self.context_manager.add_message("assistant", response.content[:500], task_type)
+                    
+                    yield {
+                        "type": "done",
+                        "model": model_name,
+                        "provider": provider,
+                        "task_type": task_type,
+                        "iterations": iteration,
+                        "tool_calls_count": summary["total_calls"],
+                        "tools_used": summary["tools_used"]
+                    }
+                    return
+                    
+            except Exception as e:
+                agent_logger.error(f"❌ Agentic stream error: {e}")
+                yield {"type": "error", "message": str(e)}
+                return
+        
+        # Max iterations reached
+        log_agentic_max_iterations(max_iterations, iteration)
+        summary = tool_executor.get_execution_summary()
+        
+        yield {
+            "type": "done",
+            "model": model_name,
+            "provider": provider,
+            "task_type": task_type,
+            "iterations": iteration,
+            "tool_calls_count": summary["total_calls"],
+            "tools_used": summary["tools_used"],
+            "max_iterations_reached": True
+        }
+
     
     def _build_system_prompt(self, task_type: TaskType) -> str:
         """Build system prompt based on task type."""

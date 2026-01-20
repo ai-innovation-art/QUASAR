@@ -9,10 +9,12 @@ Provides endpoints for:
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Body
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, AsyncGenerator
 import json
 import traceback
+import asyncio
 
 from services.agent.models import CredentialManager, ModelRouter
 from services.agent.orchestrator import Orchestrator
@@ -199,6 +201,54 @@ async def chat(request: ChatRequest):
         )
 
 
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    Stream AI responses in real-time using Server-Sent Events (SSE).
+    
+    Streams:
+    - classification: Task type classification result
+    - token: Individual response tokens
+    - tool_start: Tool execution starting
+    - tool_complete: Tool execution completed
+    - done: Final completion signal
+    - error: Error messages
+    """
+    agent_logger.info(f"📨 /chat/stream request: {request.query[:80]}...")
+    
+    orchestrator = get_orchestrator()
+    
+    # Set workspace if provided
+    if request.workspace:
+        orchestrator.set_workspace(request.workspace)
+    
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """Generate SSE events from orchestrator stream."""
+        try:
+            async for chunk in orchestrator.process_stream(
+                query=request.query,
+                current_file=request.current_file,
+                file_content=request.file_content,
+                selected_code=request.selected_code,
+                terminal_output=request.terminal_output,
+                error_message=request.error_message
+            ):
+                # SSE format: data: {json}\n\n
+                yield f"data: {json.dumps(chunk)}\n\n"
+                
+        except Exception as e:
+            agent_logger.error(f"❌ /chat/stream error: {type(e).__name__}: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
 
 
 class ClassifyRequest(BaseModel):

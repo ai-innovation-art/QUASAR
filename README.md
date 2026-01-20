@@ -1,14 +1,19 @@
-# AI Code Editor
+# QUASAR - AI Code Editor
 
-An AI-powered code editor with an intelligent agent system for code generation, explanation, bug fixing, and refactoring.
+> **Version 1.0** ✅ Complete
+
+An AI-powered code editor with an intelligent agent system for code generation, explanation, bug fixing, and refactoring with **real-time streaming responses**.
 
 ## Features
 
 - 🤖 **AI Agent Orchestrator** - Routes queries to specialized models based on task type
+- ⚡ **Real-time Streaming** - See AI responses word-by-word as they're generated
+- 🔧 **Agentic Tool Calling** - AI autonomously uses tools (read/write files, run commands)
 - 📝 **Monaco Editor** - VS Code-like editing experience
 - 💻 **Integrated Terminal** - WebSocket-based interactive terminal
-- 📁 **File Explorer** - Browse and manage project files
+- 📁 **File Explorer** - Browse and manage project files with real-time updates
 - 🔄 **Model Fallback** - Automatic failover across multiple LLM providers
+- 🎯 **Context Management** - Smart context budgeting for optimal performance
 
 ## Architecture
 
@@ -26,7 +31,7 @@ An AI-powered code editor with an intelligent agent system for code generation, 
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │                    Orchestrator                       │   │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐ │   │
-│  │  │Classify │→ │ Route   │→ │ Execute │→ │ Respond │ │   │
+│  │  │Classify │→ │ Route   │→ │ Execute │→ │ Stream  │ │   │
 │  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘ │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                              │                               │
@@ -121,6 +126,7 @@ Open `frontend/index.html` in a browser, or use Live Server extension in VS Code
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/agent/chat` | POST | Send chat message to AI |
+| `/api/agent/chat/stream` | POST | Stream AI responses (SSE) |
 | `/api/agent/classify` | POST | Classify task type |
 | `/api/agent/health` | GET | Health check |
 | `/api/files/open` | POST | Open workspace folder |
@@ -131,12 +137,12 @@ Open `frontend/index.html` in a browser, or use Live Server extension in VS Code
 ## Project Structure
 
 ```
-Editor/
+QUASAR/
 ├── frontend/
 │   ├── index.html
 │   ├── css/main.css
 │   └── js/
-│       ├── agent.js      # AI chat functionality
+│       ├── agent.js      # AI chat + streaming
 │       ├── editor.js     # Monaco editor
 │       ├── terminal.js   # xterm.js terminal
 │       └── fileTree.js   # File explorer
@@ -147,7 +153,7 @@ Editor/
 │   │   ├── files.py      # File operations
 │   │   └── terminal.py   # Terminal WebSocket
 │   └── services/agent/
-│       ├── orchestrator.py    # Task routing
+│       ├── orchestrator.py    # Task routing + streaming
 │       ├── config.py          # Model config
 │       ├── models/
 │       │   ├── credentials.py # API key management
@@ -160,17 +166,20 @@ Editor/
 └── README.md
 ```
 
-## Roadmap
+## Version 1.0 - Completed Features ✅
 
-- [x] Phase 1: Agent Foundation
-- [x] Phase 2: File & Terminal Tools
-- [x] Phase 3: Orchestrator + Specialists
-- [x] Phase 4: Context Management
-- [x] Phase 5: Frontend Integration
-- [x] Phase 6: Agentic Tool Calling Loop
-- [ ] Phase 7: Streaming Responses
-- [ ] Phase 8: RAG for Large Projects
+- [x] **Phase 1:** Agent Foundation
+- [x] **Phase 2:** File & Terminal Tools
+- [x] **Phase 3:** Orchestrator + Specialists
+- [x] **Phase 4:** Context Management
+- [x] **Phase 5:** Frontend Integration
+- [x] **Phase 6:** Agentic Tool Calling Loop
+- [x] **Phase 7:** Streaming Responses
 
-## License
+## What's Next?
 
-MIT
+Version 1.0 is complete and ready for testing! Future enhancements may include:
+- RAG for large codebases
+- Multi-file refactoring
+- Git integration
+- Collaborative editing

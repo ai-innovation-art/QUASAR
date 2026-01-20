@@ -9,6 +9,9 @@ class FileTreeManager {
         this.fileTree = [];
         this.selectedItem = null;
         this.expandedFolders = new Set();
+        this.pollingInterval = null;  // For real-time updates
+        this.lastTreeHash = null;     // To detect changes
+        this.isPollingActive = false;
     }
 
     /**
@@ -34,11 +37,15 @@ class FileTreeManager {
             const data = await response.json();
             this.rootPath = data.workspace;
             this.fileTree = data.tree;
+            this.lastTreeHash = this.getTreeHash(data.tree);  // Initialize hash
             this.render();
 
             // Update status bar with workspace name
             const workspaceName = this.rootPath.split(/[\\/]/).pop();
             document.querySelector('.logo span').textContent = workspaceName || 'AI Code Editor';
+
+            // Start polling for real-time updates
+            this.startPolling();
 
         } catch (error) {
             console.error('Failed to load file tree:', error);
@@ -71,6 +78,7 @@ class FileTreeManager {
             const data = await response.json();
             this.rootPath = data.workspace;
             this.fileTree = data.tree;
+            this.lastTreeHash = this.getTreeHash(data.tree);  // Initialize hash
             this.render();
 
             // Update workspace name in header
@@ -78,6 +86,9 @@ class FileTreeManager {
             document.querySelector('.logo span').textContent = workspaceName || 'AI Code Editor';
 
             console.log('✅ Opened folder:', this.rootPath);
+
+            // Start polling for real-time updates
+            this.startPolling();
 
             // Reconnect terminal to use the new workspace path
             if (window.terminalManager) {
@@ -733,6 +744,57 @@ dist/
                 this.togglePanel();
             }
         });
+    }
+
+    /**
+     * Start polling for file tree changes (real-time updates)
+     */
+    startPolling() {
+        if (this.isPollingActive) return;  // Already polling
+
+        this.isPollingActive = true;
+        console.log('🔄 Started file tree polling (every 2s)');
+
+        this.pollingInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/files/tree`);
+                if (!response.ok) return;  // Workspace might be closed
+
+                const data = await response.json();
+                const newHash = this.getTreeHash(data.tree);
+
+                // Only update if tree changed
+                if (this.lastTreeHash && newHash !== this.lastTreeHash) {
+                    console.log('📁 File tree changed, updating...');
+                    this.fileTree = data.tree;
+                    this.render();
+                }
+
+                this.lastTreeHash = newHash;
+            } catch (error) {
+                // Silently handle errors (workspace might be closed)
+            }
+        }, 2000);  // Poll every 2 seconds
+    }
+
+    /**
+     * Stop polling for file tree changes
+     */
+    stopPolling() {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+            this.isPollingActive = false;
+            this.lastTreeHash = null;
+            console.log('⏸️  Stopped file tree polling');
+        }
+    }
+
+    /**
+     * Generate a hash of the file tree for change detection
+     */
+    getTreeHash(tree) {
+        return JSON.stringify(tree);  // Simple hash using JSON string
     }
 
     /**

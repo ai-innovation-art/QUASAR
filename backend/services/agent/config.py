@@ -71,6 +71,7 @@ class AgentConfig:
                 "fast": ModelConfig("llama-3.1-8b-instant", "groq"),
                 "versatile": ModelConfig("llama-3.3-70b-versatile", "groq"),
                 "code": ModelConfig("llama-3.1-70b-versatile", "groq"),
+                "reasoning": ModelConfig("gpt-oss:120b", "groq"),  # GPT-OSS 120B for complex reasoning
             }
         ),
         "cloudflare": ProviderConfig(
@@ -78,6 +79,7 @@ class AgentConfig:
             enabled=True,
             models={
                 "llama": ModelConfig("@cf/meta/llama-3.1-70b-instruct", "cloudflare"),
+                "llama_fast": ModelConfig("@cf/meta/llama-3.1-8b-instruct", "cloudflare"),  # Fast 8B model
                 "qwen": ModelConfig("@cf/qwen/qwen2.5-coder-32b-instruct", "cloudflare"),
             }
         ),
@@ -88,50 +90,74 @@ class AgentConfig:
     # First is primary, rest are fallbacks
     # NOTE: All Ollama models are now cloud-based (no local download needed)
     TASK_MODELS: Dict[str, List[tuple]] = {
+        # Task 1: Conversational Chat
         "chat": [
-            ("ollama", "chat"),           # Primary: qwen3:8b (cloud, fast)
-            ("groq", "fast"),             # Fallback: Groq 8B
+            ("ollama", "chat"),              # Primary: qwen3-vl:235b-instruct-cloud
+            ("groq", "fast"),                # Fallback 1: llama-3.1-8b-instant
+            ("cloudflare", "llama_fast"),    # Fallback 2: llama-3.1-8b
         ],
+        
+        # Task 2: Code Explanation (Simple)
         "code_explain_simple": [
-            ("ollama", "code"),           # Primary: glm-4.7:cloud
-            ("groq", "versatile"),        # Fallback: Groq 70B
+            ("ollama", "code"),              # Primary: glm-4.7:cloud
+            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
+            ("cerebras", "code_gen"),        # Fallback 2: zai-glm-4.7
         ],
+        
+        # Task 3: Code Explanation (Complex)
         "code_explain_complex": [
-            ("ollama", "code"),           # Primary: glm-4.7:cloud (198K context)
-            ("cerebras", "orchestrator"), # Fallback: Cerebras 32B
-            ("groq", "versatile"),        # Final fallback
+            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
+            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
+            ("ollama", "chat"),              # Fallback 2: qwen3-vl:235b-instruct-cloud
         ],
+        
+        # Task 4: Code Generation (Function/Class)
         "code_generation": [
-            ("ollama", "code"),           # Primary: glm-4.7:cloud (tools+thinking)
-            ("cerebras", "code_gen"),     # Fallback: Cerebras GLM-4.7
-            ("groq", "code"),             # Final fallback
+            ("ollama", "code"),              # Primary: glm-4.7:cloud
+            ("cerebras", "code_gen"),        # Fallback 1: zai-glm-4.7
+            ("groq", "reasoning"),           # Fallback 2: gpt-oss-120b
         ],
+        
+        # Task 5: Code Generation (Multi-file/Module)
         "code_generation_multi": [
-            ("ollama", "agentic"),        # Primary: devstral-small-2 (built for multi-file)
-            ("cerebras", "complex"),      # Fallback: Qwen3-235B
-            ("ollama", "code"),           # Final: glm-4.7:cloud
+            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
+            ("groq", "reasoning"),           # Fallback 1: gpt-oss-120b
+            ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
         ],
+        
+        # Task 6: Bug Detection & Fixing
         "bug_fixing": [
-            ("ollama", "agentic"),        # Primary: devstral-small-2 (great for debugging)
-            ("ollama", "code"),           # Fallback: glm-4.7:cloud
-            ("groq", "versatile"),        # Final
+            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
+            ("groq", "reasoning"),           # Fallback 1: gpt-oss-120b
+            ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
         ],
+        
+        # Task 7: Code Refactoring
         "refactor": [
-            ("ollama", "code"),           # Primary: glm-4.7:cloud
-            ("cerebras", "orchestrator"), # Fallback
-            ("groq", "versatile"),        # Final
+            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
+            ("ollama", "code"),              # Fallback 1: glm-4.7:cloud
+            ("groq", "versatile"),           # Fallback 2: llama-3.3-70b-versatile
         ],
+        
+        # Task 8: Architecture & Design
         "architecture": [
-            ("ollama", "reasoning"),      # Primary: gpt-oss:20b (reasoning+thinking)
-            ("cerebras", "complex"),      # Fallback: Qwen3-235B
+            ("ollama", "reasoning"),         # Primary: gpt-oss:20b-cloud
+            ("cerebras", "code_gen"),        # Fallback 1: zai-glm-4.7
+            ("groq", "reasoning"),           # Fallback 2: gpt-oss-120b
         ],
+        
+        # Task 9: Test Generation
         "test_generation": [
-            ("ollama", "code"),           # Primary: glm-4.7:cloud
-            ("groq", "versatile"),        # Fallback
+            ("ollama", "chat"),              # Primary: qwen3-vl:235b-instruct-cloud
+            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
+            ("cerebras", "orchestrator"),    # Fallback 2: qwen-3-32b
         ],
+        
+        # Task 10: Documentation Generation
         "documentation": [
-            ("ollama", "chat"),           # Primary: qwen3:8b (fast, simple task)
-            ("groq", "fast"),             # Fallback
+            ("ollama", "chat"),              # Primary: qwen3-vl:235b-instruct-cloud
+            ("groq", "fast"),                # Fallback 1: llama-3.1-8b-instant
+            ("cloudflare", "llama_fast"),    # Fallback 2: llama-3.1-8b
         ],
     }
     
@@ -142,7 +168,7 @@ class AgentConfig:
     TIMEOUT_SECONDS = 60
     
     # Agentic Loop Configuration
-    MAX_TOOL_ITERATIONS = 10          # Max tool call loops per request
+    MAX_TOOL_ITERATIONS = 15          # Max tool call loops per request (increased for complex tasks)
     TOOL_TIMEOUT_SECONDS = 30         # Timeout per individual tool execution
     MAX_TOOL_RESULT_LENGTH = 5000     # Truncate tool results beyond this
     ENABLE_TOOL_CONFIRMATION = False  # Require user confirmation for dangerous ops
