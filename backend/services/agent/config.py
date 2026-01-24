@@ -51,6 +51,9 @@ class AgentConfig:
                 "reasoning": ModelConfig("gpt-oss:20b-cloud", "ollama"),                # GPT-OSS for reasoning, tools+thinking
                 "agentic": ModelConfig("devstral-small-2:24b-cloud", "ollama"),         # Best for agentic tool calling
                 # "vision": ModelConfig("qwen3-vl:235b-instruct-cloud", "ollama"),        # Vision + 235B reasoning
+                
+                # 🧪 TEST SLOT - Replace model name here for quick testing
+                "test": ModelConfig("glm-4.7:cloud", "ollama"),                         # ← Change this to test any Ollama model
             }
         ),
         "cerebras": ProviderConfig(
@@ -61,6 +64,9 @@ class AgentConfig:
                 "orchestrator": ModelConfig("qwen-3-32b", "cerebras"),
                 "complex": ModelConfig("qwen-3-235b-a22b-instruct-2507", "cerebras"),
                 "code_gen": ModelConfig("zai-glm-4.7", "cerebras"),
+                
+                # 🧪 TEST SLOT - Replace model name here for quick testing
+                "test": ModelConfig("zai-glm-4.7", "cerebras"),                         # ← Change this to test any Cerebras model
             }
         ),
         "groq": ProviderConfig(
@@ -72,6 +78,9 @@ class AgentConfig:
                 "versatile": ModelConfig("llama-3.3-70b-versatile", "groq"),
                 "code": ModelConfig("llama-3.1-70b-versatile", "groq"),
                 "reasoning": ModelConfig("openai/gpt-oss-120b", "groq"),  # GPT-OSS 120B with openai prefix
+                
+                # 🧪 TEST SLOT - Replace model name here for quick testing
+                "test": ModelConfig("llama-3.1-8b-instant", "groq"),                    # ← Change this to test any Groq model
             }
         ),
         "cloudflare": ProviderConfig(
@@ -90,6 +99,11 @@ class AgentConfig:
     # First is primary, rest are fallbacks
     # NOTE: All Ollama models are now cloud-based (no local download needed)
     TASK_MODELS: Dict[str, List[tuple]] = {
+        # 🧪 TESTING - Uncomment this to test your test models across all tasks
+        # "chat": [("ollama", "test")],
+        # "code_generation": [("cerebras", "test")],
+        # "bug_fixing": [("groq", "test")],
+        
         # Task 1: Conversational Chat
         "chat": [
             ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)

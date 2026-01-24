@@ -398,6 +398,11 @@ class AgentManager {
                 label: 'Deleting file',
                 getDetail: (a) => a.path || a.file_path || 'file'
             },
+            'patch_file': {
+                icon: '🩹',
+                label: 'Patching file',
+                getDetail: (a) => a.path || a.file_path || 'file'
+            },
             'move_file': {
                 icon: '📦',
                 label: 'Moving file',

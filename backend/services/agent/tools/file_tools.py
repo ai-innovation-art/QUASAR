@@ -278,7 +278,7 @@ def create_file(path: str, content: str, overwrite: bool = False) -> Dict[str, A
 
 
 @tool
-def modify_file(path: str, content: str, create_backup: bool = True) -> Dict[str, Any]:
+def modify_file(path: str, content: str, create_backup: bool = False) -> Dict[str, Any]:
     """
     Modify an existing file with new content.
     

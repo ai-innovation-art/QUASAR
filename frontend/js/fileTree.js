@@ -391,6 +391,12 @@ class FileTreeManager {
      * Open a file
      */
     async openFile(path) {
+        // Guard: Ensure workspace is set
+        if (!this.rootPath) {
+            console.warn('⚠️ Cannot open file: No workspace folder is open.');
+            return;
+        }
+
         try {
             // Fetch file content from backend API
             const response = await fetch(`${CONFIG.API_BASE_URL}/files/read?path=${encodeURIComponent(path)}`);
