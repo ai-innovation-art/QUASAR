@@ -7,9 +7,12 @@ Exports all tools for use with LangChain agents.
 from .file_tools import (
     FILE_TOOLS,
     read_file,
+    read_file_chunk,
     create_file,
     modify_file,
+    patch_file,
     delete_file,
+    move_file,
     list_files,
     search_files,
     set_workspace,
@@ -41,8 +44,8 @@ ALL_TOOLS = FILE_TOOLS + TERMINAL_TOOLS
 TOOLS_BY_CATEGORY = {
     "file": FILE_TOOLS,
     "terminal": TERMINAL_TOOLS,
-    "read_only": [read_file, list_files, search_files, get_terminal_output, check_command_available],
-    "write": [create_file, modify_file, delete_file],
+    "read_only": [read_file, read_file_chunk, list_files, search_files, get_terminal_output, check_command_available],
+    "write": [create_file, modify_file, patch_file, delete_file, move_file],
     "execute": [run_terminal_command, run_python_file, run_pip_command],
 }
 
@@ -57,8 +60,11 @@ def get_tools_for_task(task_type: str) -> list:
     Returns:
         List of tools appropriate for the task
     """
-    # Simple tasks - read only
-    read_only_tasks = ["chat", "code_explain_simple", "code_explain_complex"]
+    # Simple READ tasks - read only
+    read_only_tasks = ["code_explain_simple", "code_explain_complex"]
+    
+    # Chat task - needs ALL tools for agentic operations (move, delete, create, etc.)
+    full_agentic_tasks = ["chat"]
     
     # Code generation - can create files
     generation_tasks = ["code_generation", "code_generation_multi", "test_generation", "documentation"]
@@ -68,6 +74,8 @@ def get_tools_for_task(task_type: str) -> list:
     
     if task_type in read_only_tasks:
         return TOOLS_BY_CATEGORY["read_only"]
+    elif task_type in full_agentic_tasks:
+        return ALL_TOOLS  # Chat gets ALL tools for full agentic capability
     elif task_type in generation_tasks:
         return TOOLS_BY_CATEGORY["file"] + [run_terminal_command, check_command_available]
     elif task_type in full_access_tasks:

@@ -107,6 +107,8 @@ def read_file(path: str) -> Dict[str, Any]:
     """
     Read the contents of a file in the workspace.
     
+    For large files (>2000 lines), returns metadata only and suggests using read_file_chunk.
+    
     Args:
         path: File path relative to workspace (e.g., "src/main.py")
         
@@ -130,17 +132,100 @@ def read_file(path: str) -> Dict[str, Any]:
     
     try:
         content = full_path.read_text(encoding="utf-8")
-        agent_logger.info(f"✅ read_file success: {path} ({len(content)} chars, {len(content.split(chr(10)))} lines)")
+        lines = content.split("\n")
+        line_count = len(lines)
+        size_bytes = len(content.encode("utf-8"))
+        
+        # Check if file is too large
+        MAX_LINES = 2000
+        if line_count > MAX_LINES:
+            agent_logger.warning(f"⚠️ Large file detected: {path} ({line_count} lines). Returning metadata only.")
+            return {
+                "path": path,
+                "language": detect_language(path),
+                "lines": line_count,
+                "size_bytes": size_bytes,
+                "is_large_file": True,
+                "max_lines_shown": 0,
+                "hint": f"File has {line_count} lines. Use read_file_chunk(path, start_line, end_line) to read specific sections. Recommended chunk size: 500 lines."
+            }
+        
+        agent_logger.info(f"✅ read_file success: {path} ({len(content)} chars, {line_count} lines)")
         return {
             "content": content,
             "path": path,
             "language": detect_language(path),
-            "lines": len(content.split("\n")),
-            "size_bytes": len(content.encode("utf-8"))
+            "lines": line_count,
+            "size_bytes": size_bytes
         }
     except Exception as e:
         agent_logger.error(f"❌ read_file error: {path} - {e}")
         return {"error": f"Failed to read file: {str(e)}"}
+
+
+@tool
+def read_file_chunk(path: str, start_line: int = 1, end_line: int = 500) -> Dict[str, Any]:
+    """
+    Read a specific chunk of a file by line numbers.
+    
+    Use this for large files that exceed the context limit.
+    
+    Args:
+        path: File path relative to workspace
+        start_line: Starting line number (1-indexed, inclusive)
+        end_line: Ending line number (1-indexed, inclusive)
+        
+    Returns:
+        Dictionary with chunk content, line range, and total lines
+    """
+    agent_logger.info(f"🔧 Tool: read_file_chunk({path}, lines {start_line}-{end_line})")
+    
+    is_valid, error, full_path = validate_path(path)
+    if not is_valid:
+        agent_logger.error(f"❌ read_file_chunk failed: {error}")
+        return {"error": error}
+    
+    if not full_path.exists():
+        agent_logger.error(f"❌ File not found: {path}")
+        return {"error": f"File not found: {path}"}
+    
+    if not full_path.is_file():
+        agent_logger.error(f"❌ Not a file: {path}")
+        return {"error": f"Not a file: {path}"}
+    
+    try:
+        content = full_path.read_text(encoding="utf-8")
+        lines = content.split("\n")
+        total_lines = len(lines)
+        
+        # Validate line range
+        if start_line < 1:
+            start_line = 1
+        if end_line > total_lines:
+            end_line = total_lines
+        if start_line > end_line:
+            return {"error": f"Invalid range: start_line ({start_line}) > end_line ({end_line})"}
+        
+        # Extract chunk (convert to 0-indexed)
+        chunk_lines = lines[start_line - 1:end_line]
+        chunk_content = "\n".join(chunk_lines)
+        
+        agent_logger.info(f"✅ read_file_chunk success: {path} lines {start_line}-{end_line} ({len(chunk_lines)} lines)")
+        return {
+            "content": chunk_content,
+            "path": path,
+            "language": detect_language(path),
+            "start_line": start_line,
+            "end_line": end_line,
+            "lines_in_chunk": len(chunk_lines),
+            "total_lines": total_lines,
+            "has_more_before": start_line > 1,
+            "has_more_after": end_line < total_lines
+        }
+    except Exception as e:
+        agent_logger.error(f"❌ read_file_chunk error: {path} - {e}")
+        return {"error": f"Failed to read file chunk: {str(e)}"}
+
 
 
 @tool
@@ -165,7 +250,12 @@ def create_file(path: str, content: str, overwrite: bool = False) -> Dict[str, A
     
     if full_path.exists() and not overwrite:
         agent_logger.warning(f"⚠️ File exists, overwrite=False: {path}")
-        return {"error": f"File already exists: {path}. Set overwrite=True to replace."}
+        return {
+            "error": f"File already exists: {path}",
+            "file_exists": True,
+            "path": path,
+            "hint": "Use overwrite=True to replace the existing file, or choose a different filename."
+        }
     
     try:
         # Create parent directories if needed
@@ -188,7 +278,7 @@ def create_file(path: str, content: str, overwrite: bool = False) -> Dict[str, A
 
 
 @tool
-def modify_file(path: str, content: str, create_backup: bool = True) -> Dict[str, Any]:
+def modify_file(path: str, content: str, create_backup: bool = False) -> Dict[str, Any]:
     """
     Modify an existing file with new content.
     
@@ -233,6 +323,78 @@ def modify_file(path: str, content: str, create_backup: bool = True) -> Dict[str
 
 
 @tool
+def patch_file(path: str, find_text: str, replace_text: str, occurrence: int = 1) -> Dict[str, Any]:
+    """
+    Patch a file by finding and replacing specific text.
+    
+    Use this for TARGETED edits when you only need to change a specific section
+    without rewriting the entire file. For example, updating a checkbox from [ ] to [x].
+    
+    Args:
+        path: File path relative to workspace
+        find_text: Exact text to find (including whitespace and newlines)
+        replace_text: Text to replace it with
+        occurrence: Which occurrence to replace (1=first, 0=all occurrences)
+        
+    Returns:
+        Dictionary with success status and number of replacements made
+    """
+    agent_logger.info(f"🔧 Tool: patch_file({path}, find={find_text[:50]}..., replace={replace_text[:50]}...)")
+    
+    is_valid, error, full_path = validate_path(path)
+    if not is_valid:
+        return {"error": error}
+    
+    if not full_path.exists():
+        return {"error": f"File not found: {path}"}
+    
+    try:
+        content = full_path.read_text(encoding="utf-8")
+        
+        # Check if the text exists
+        if find_text not in content:
+            return {
+                "error": f"Text not found in file",
+                "hint": "The exact text was not found. Check for extra spaces, newlines, or typos."
+            }
+        
+        # Count occurrences
+        count = content.count(find_text)
+        
+        if occurrence == 0:
+            # Replace all occurrences
+            new_content = content.replace(find_text, replace_text)
+            replaced_count = count
+        else:
+            # Replace specific occurrence
+            if occurrence > count:
+                return {"error": f"Only {count} occurrence(s) found, requested occurrence {occurrence}"}
+            
+            # Find the nth occurrence and replace it
+            idx = -1
+            for i in range(occurrence):
+                idx = content.find(find_text, idx + 1)
+            
+            new_content = content[:idx] + replace_text + content[idx + len(find_text):]
+            replaced_count = 1
+        
+        # Write back
+        full_path.write_text(new_content, encoding="utf-8")
+        
+        agent_logger.info(f"✅ patch_file success: {path} ({replaced_count} replacement(s))")
+        return {
+            "success": True,
+            "path": path,
+            "replacements": replaced_count,
+            "occurrences_found": count
+        }
+        
+    except Exception as e:
+        agent_logger.error(f"❌ patch_file error: {path} - {e}")
+        return {"error": f"Failed to patch file: {str(e)}"}
+
+
+@tool
 def delete_file(path: str, recursive: bool = False) -> Dict[str, Any]:
     """
     Delete a file or directory.
@@ -271,17 +433,69 @@ def delete_file(path: str, recursive: bool = False) -> Dict[str, Any]:
 
 
 @tool
+def move_file(source: str, destination: str) -> Dict[str, Any]:
+    """
+    Move or rename a file/directory.
+    
+    Args:
+        source: Source path relative to workspace
+        destination: Destination path relative to workspace
+        
+    Returns:
+        Dictionary with success status
+    """
+    agent_logger.info(f"🔧 Tool: move_file({source} -> {destination})")
+    
+    # Validate source
+    is_valid, error, source_path = validate_path(source)
+    if not is_valid:
+        return {"error": f"Source: {error}"}
+    
+    if not source_path.exists():
+        return {"error": f"Source not found: {source}"}
+    
+    # Validate destination
+    is_valid, error, dest_path = validate_path(destination)
+    if not is_valid:
+        return {"error": f"Destination: {error}"}
+    
+    try:
+        import shutil
+        
+        # Create destination directory if needed
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Move the file/directory
+        shutil.move(str(source_path), str(dest_path))
+        
+        agent_logger.info(f"✅ Moved: {source} -> {destination}")
+        return {
+            "success": True,
+            "source": source,
+            "destination": destination,
+            "message": f"Moved {source} to {destination}"
+        }
+    except Exception as e:
+        agent_logger.error(f"❌ Move failed: {e}")
+        return {"error": f"Failed to move: {str(e)}"}
+
+
+@tool
 def list_files(path: str = ".", recursive: bool = False) -> Dict[str, Any]:
     """
     List files and directories in a path.
     
     Args:
         path: Directory path relative to workspace (default: workspace root)
-        recursive: If True, list recursively
+        recursive: If True, list recursively (limited to 100 files, 50 dirs)
         
     Returns:
         Dictionary with files and directories
     """
+    # Limits to prevent context overflow
+    MAX_FILES = 100
+    MAX_DIRS = 50
+    
     is_valid, error, full_path = validate_path(path)
     if not is_valid:
         return {"error": error}
@@ -295,48 +509,62 @@ def list_files(path: str = ".", recursive: bool = False) -> Dict[str, Any]:
     try:
         files = []
         directories = []
-        
-        # Skip these directories
-        skip_dirs = {"__pycache__", "node_modules", ".git", ".venv", "venv"}
+        files_truncated = False
+        dirs_truncated = False
         
         if recursive:
             for item in full_path.rglob("*"):
-                # Skip hidden and excluded directories
-                if any(part in skip_dirs or part.startswith(".") for part in item.parts):
-                    continue
-                
                 rel_path = str(item.relative_to(full_path))
                 
-                if item.is_file():
-                    files.append({
-                        "path": rel_path,
-                        "language": detect_language(rel_path),
-                        "size": item.stat().st_size
-                    })
-                elif item.is_dir():
-                    directories.append(rel_path)
-        else:
-            for item in full_path.iterdir():
-                # Skip hidden files and excluded directories
-                if item.name.startswith(".") or item.name in skip_dirs:
+                # Skip common ignored directories
+                if any(part in [".git", "__pycache__", "node_modules", ".venv", "venv"] for part in item.parts):
                     continue
                 
                 if item.is_file():
-                    files.append({
-                        "path": item.name,
-                        "language": detect_language(item.name),
-                        "size": item.stat().st_size
-                    })
+                    if len(files) < MAX_FILES:
+                        files.append({
+                            "path": rel_path,
+                            "language": detect_language(rel_path),
+                            "size": item.stat().st_size
+                        })
+                    else:
+                        files_truncated = True
                 elif item.is_dir():
-                    directories.append(item.name)
+                    if len(directories) < MAX_DIRS:
+                        directories.append(rel_path)
+                    else:
+                        dirs_truncated = True
+        else:
+            for item in full_path.iterdir():
+                if item.is_file():
+                    if len(files) < MAX_FILES:
+                        files.append({
+                            "path": item.name,
+                            "language": detect_language(item.name),
+                            "size": item.stat().st_size
+                        })
+                    else:
+                        files_truncated = True
+                elif item.is_dir():
+                    if len(directories) < MAX_DIRS:
+                        directories.append(item.name)
+                    else:
+                        dirs_truncated = True
         
-        return {
+        result = {
             "path": path,
             "files": files,
             "directories": sorted(directories),
             "total_files": len(files),
             "total_directories": len(directories)
         }
+        
+        # Add hints if truncated
+        if files_truncated or dirs_truncated:
+            result["truncated"] = True
+            result["hint"] = f"Results limited to {MAX_FILES} files and {MAX_DIRS} directories. Use a more specific path to see more."
+        
+        return result
     except Exception as e:
         return {"error": f"Failed to list files: {str(e)}"}
 
@@ -380,7 +608,7 @@ def search_files(query: str, file_pattern: str = "*.py", path: str = ".") -> Dic
                         matches.append({
                             "file": rel_path,
                             "line": line_num,
-                            "content": line.strip()[:200]  # Truncate long lines
+                            "content": line.strip()  # Show full line
                         })
             except:
                 continue
@@ -388,7 +616,7 @@ def search_files(query: str, file_pattern: str = "*.py", path: str = ".") -> Dic
         return {
             "query": query,
             "pattern": file_pattern,
-            "matches": matches[:50],  # Limit results
+            "matches": matches,  # Limit results removed
             "total_matches": len(matches)
         }
     except Exception as e:
@@ -398,9 +626,12 @@ def search_files(query: str, file_pattern: str = "*.py", path: str = ".") -> Dic
 # Export all file tools
 FILE_TOOLS = [
     read_file,
+    read_file_chunk,
     create_file,
     modify_file,
+    patch_file,
     delete_file,
+    move_file,
     list_files,
     search_files
 ]

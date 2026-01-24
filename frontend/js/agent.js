@@ -7,7 +7,8 @@ class AgentManager {
     constructor() {
         this.messages = [];
         this.isLoading = false;
-        this.currentModel = 'auto';
+        this.currentModel = 'auto'; // Model being used by AI (indicator)
+        this.selectedModel = localStorage.getItem('quasar_selected_model') || 'Auto'; // User selected model
         this.streamingEnabled = true;  // Enable streaming by default
         this.currentStreamingElement = null;  // Track streaming message element
         this.currentEventSource = null;  // Track EventSource for cancellation
@@ -20,6 +21,8 @@ class AgentManager {
     init() {
         this.setupEventListeners();
         this.autoResizeTextarea();
+        this.updateModelSelectionUI();
+        this.loadAvailableModels();
     }
 
     /**
@@ -99,7 +102,8 @@ class AgentManager {
             current_file: context.filePath || null,
             file_content: context.fileContent || null,
             selected_code: context.selection || null,
-            terminal_output: window.terminalManager?.getLastOutput?.() || null
+            terminal_output: window.terminalManager?.getLastOutput?.() || null,
+            selected_model: this.selectedModel === 'Auto' ? null : this.selectedModel
         };
 
         const response = await fetch(`${baseUrl}/api/agent/chat`, {
@@ -129,7 +133,8 @@ class AgentManager {
             current_file: context.filePath || null,
             file_content: context.fileContent || null,
             selected_code: context.selection || null,
-            terminal_output: window.terminalManager?.getLastOutput?.() || null
+            terminal_output: window.terminalManager?.getLastOutput?.() || null,
+            selected_model: this.selectedModel === 'Auto' ? null : this.selectedModel
         };
 
         // Create streaming message placeholder
@@ -190,15 +195,8 @@ class AgentManager {
                                     this.setModel(`${data.provider}/${data.model}`);
                                 }
 
-                                // Auto-refresh file tree if files were modified
-                                if (toolsUsed.length > 0) {
-                                    const fileModifyingTools = ['create_file', 'modify_file', 'delete_file'];
-                                    const shouldRefresh = toolsUsed.some(tool => fileModifyingTools.includes(tool));
-                                    if (shouldRefresh && window.fileTreeManager) {
-                                        console.log('Auto-refreshing file tree after streaming');
-                                        setTimeout(() => window.fileTreeManager.loadFileTree(), 500);
-                                    }
-                                }
+                                // NOTE: File tree refresh now happens immediately in tool_complete handler
+                                // No need for delayed refresh here
                             } else if (data.type === 'error') {
                                 this.finalizeStreamingMessage(`Error: ${data.message}`);
                             }
@@ -268,15 +266,27 @@ class AgentManager {
     }
 
     /**
-     * Update streaming message with new content
+     * Update streaming message with new content (appends to streaming area only)
      */
     updateStreamingMessage(content) {
         if (!this.currentStreamingElement) return;
 
         const contentEl = this.currentStreamingElement.querySelector('.message-content');
         if (contentEl) {
-            const formattedContent = this.formatMessage(content);
-            contentEl.innerHTML = formattedContent + '<span class="streaming-cursor">▊</span>';
+            // Strip think tags from streaming content
+            const cleanContent = this.stripThinkTags(content);
+
+            // Find or create the streaming text area (separate from action cards)
+            let streamingText = contentEl.querySelector('.streaming-text');
+            if (!streamingText) {
+                streamingText = document.createElement('div');
+                streamingText.className = 'streaming-text';
+                contentEl.appendChild(streamingText);
+            }
+
+            // Update only the streaming text area, not the action cards
+            const formattedContent = this.formatMessage(cleanContent);
+            streamingText.innerHTML = formattedContent + '<span class="streaming-cursor">▊</span>';
 
             // Auto-scroll
             const messagesContainer = document.getElementById('chatMessages');
@@ -295,45 +305,269 @@ class AgentManager {
             case 'iteration':
                 console.log(`🔄 Iteration ${data.current}/${data.max}`);
                 break;
+            case 'message':
+                // Display narrative message inline
+                console.log(`💬 ${data.content}`);
+                this.appendProgressMessage(data.content);
+                break;
             case 'tool_start':
                 console.log(`🔧 Starting tool: ${data.tool}`);
-                this.showToolIndicator(data.tool);
+                this.showActionCard(data.tool, data.args || {}, 'running');
                 break;
             case 'tool_complete':
                 console.log(`✅ Tool complete: ${data.tool}`);
-                this.hideToolIndicator(data.tool);
+                this.updateActionCard(data.tool, 'complete', data.result);
+
+                // Immediately refresh file tree for file-modifying tools
+                const fileTools = ['create_file', 'modify_file', 'delete_file', 'move_file'];
+                if (fileTools.includes(data.tool) && window.fileTreeManager) {
+                    console.log(`🔄 Refreshing file tree after ${data.tool}`);
+                    window.fileTreeManager.loadFileTree();
+                }
+                break;
+            case 'file_tree_updated':
+                // Explicit event from backend when file tree changes
+                console.log('📁 File tree update event received');
+                if (window.fileTreeManager) {
+                    window.fileTreeManager.loadFileTree();
+                }
+                break;
+            case 'tool_error':
+                console.log(`❌ Tool error: ${data.tool}`);
+                this.updateActionCard(data.tool, 'error', data.error);
                 break;
         }
     }
 
     /**
-     * Show tool execution indicator
+     * Append a narrative/progress message to the streaming content
      */
-    showToolIndicator(toolName) {
+    appendProgressMessage(message) {
         if (!this.currentStreamingElement) return;
 
-        const indicator = document.createElement('div');
-        indicator.className = 'tool-indicator';
-        indicator.id = `tool-${toolName}`;
-        indicator.innerHTML = `⚙️ Running: ${toolName}...`;
-
         const contentEl = this.currentStreamingElement.querySelector('.message-content');
-        contentEl.insertAdjacentElement('beforebegin', indicator);
-    }
+        if (contentEl) {
+            // Create narrative text paragraph
+            const narrativeEl = document.createElement('p');
+            narrativeEl.className = 'agent-narrative';
+            narrativeEl.innerHTML = this.formatInlineCode(message);
 
-    /**
-     * Hide tool execution indicator
-     */
-    hideToolIndicator(toolName) {
-        const indicator = document.getElementById(`tool-${toolName}`);
-        if (indicator) {
-            indicator.innerHTML = `✅ ${toolName}`;
-            setTimeout(() => indicator.remove(), 1000);
+            // Insert before cursor
+            const cursor = contentEl.querySelector('.streaming-cursor');
+            if (cursor) {
+                cursor.insertAdjacentElement('beforebegin', narrativeEl);
+            } else {
+                contentEl.appendChild(narrativeEl);
+            }
+
+            // Auto-scroll
+            const messagesContainer = document.getElementById('chatMessages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
     }
 
     /**
-     * Finalize streaming message
+     * Format inline code in messages (text wrapped in backticks)
+     */
+    formatInlineCode(text) {
+        return text.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+    }
+
+    /**
+     * Get tool display info (icon, label, description)
+     */
+    getToolDisplayInfo(toolName, args) {
+        const toolInfo = {
+            'read_file': {
+                icon: '📖',
+                label: 'Read file(s)',
+                getDetail: (a) => a.path || a.file_path || 'file'
+            },
+            'create_file': {
+                icon: '📝',
+                label: 'Creating file',
+                getDetail: (a) => a.path || a.file_path || 'file'
+            },
+            'modify_file': {
+                icon: '✏️',
+                label: 'Modifying file',
+                getDetail: (a) => a.path || a.file_path || 'file'
+            },
+            'delete_file': {
+                icon: '🗑️',
+                label: 'Deleting file',
+                getDetail: (a) => a.path || a.file_path || 'file'
+            },
+            'patch_file': {
+                icon: '🩹',
+                label: 'Patching file',
+                getDetail: (a) => a.path || a.file_path || 'file'
+            },
+            'move_file': {
+                icon: '📦',
+                label: 'Moving file',
+                getDetail: (a) => `${a.source || 'file'} → ${a.destination || 'destination'}`
+            },
+            'list_files': {
+                icon: '🔍',
+                label: 'Searched workspace',
+                getDetail: (a) => a.description || 'Scanning directory structure'
+            },
+            'search_code': {
+                icon: '🔍',
+                label: 'Searched workspace',
+                getDetail: (a) => a.pattern ? `Searching for "${a.pattern}"` : 'Searching codebase'
+            },
+            'run_terminal_command': {
+                icon: '⌨️',
+                label: 'Command',
+                getDetail: (a) => a.command || 'terminal command',
+                isCommand: true
+            },
+            'run_python_file': {
+                icon: '🐍',
+                label: 'Running Python',
+                getDetail: (a) => a.file_path || 'script'
+            },
+            'run_pip_command': {
+                icon: '📦',
+                label: 'Package Manager',
+                getDetail: (a) => `pip ${a.action || ''} ${a.packages || ''}`.trim()
+            }
+        };
+
+        return toolInfo[toolName] || {
+            icon: '⚙️',
+            label: toolName.replace(/_/g, ' '),
+            getDetail: () => 'Executing...'
+        };
+    }
+
+    /**
+     * Show styled action card for tool execution
+     */
+    showActionCard(toolName, args, status) {
+        if (!this.currentStreamingElement) return;
+
+        const contentEl = this.currentStreamingElement.querySelector('.message-content');
+        if (!contentEl) return;
+
+        const info = this.getToolDisplayInfo(toolName, args);
+        const detail = info.getDetail(args);
+
+        // Create action card
+        const card = document.createElement('div');
+        card.className = `action-card action-card-${status}`;
+        card.id = `action-${toolName}-${Date.now()}`;
+        card.dataset.tool = toolName;
+
+        if (info.isCommand) {
+            // Special styling for terminal commands
+            card.innerHTML = `
+                <div class="action-header">
+                    <span class="action-icon">${info.icon}</span>
+                    <span class="action-label">${info.label}</span>
+                    <span class="action-status-badge running">Running</span>
+                </div>
+                <div class="command-box">
+                    <code>${this.escapeHtml(detail)}</code>
+                </div>
+            `;
+        } else {
+            // Standard action card
+            const fileName = this.extractFileName(detail);
+            card.innerHTML = `
+                <div class="action-header">
+                    <span class="action-icon">${info.icon}</span>
+                    <span class="action-label">${info.label}</span>
+                    ${fileName ? `<span class="file-badge">${fileName}</span>` : ''}
+                    <span class="action-status-badge running">⏳</span>
+                </div>
+                ${!fileName && detail ? `<div class="action-detail">${this.escapeHtml(detail)}</div>` : ''}
+            `;
+        }
+
+        // Insert before cursor
+        const cursor = contentEl.querySelector('.streaming-cursor');
+        if (cursor) {
+            cursor.insertAdjacentElement('beforebegin', card);
+        } else {
+            contentEl.appendChild(card);
+        }
+
+        // Store reference
+        this.currentActionCard = card;
+
+        // Auto-scroll
+        const messagesContainer = document.getElementById('chatMessages');
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    /**
+     * Update action card status
+     */
+    updateActionCard(toolName, status, result) {
+        // Find the most recent card for this tool
+        const cards = document.querySelectorAll(`[data-tool="${toolName}"]`);
+        const card = cards[cards.length - 1];
+
+        if (!card) return;
+
+        card.className = `action-card action-card-${status}`;
+
+        const statusBadge = card.querySelector('.action-status-badge');
+        if (statusBadge) {
+            if (status === 'complete') {
+                statusBadge.textContent = '✓';
+                statusBadge.className = 'action-status-badge complete';
+            } else if (status === 'error') {
+                statusBadge.textContent = '✗';
+                statusBadge.className = 'action-status-badge error';
+            }
+        }
+
+        // Show command output if present
+        if (result && card.querySelector('.command-box')) {
+            const outputEl = document.createElement('div');
+            outputEl.className = 'command-output';
+            outputEl.innerHTML = `<pre>${this.escapeHtml(result.substring(0, 500))}</pre>`;
+            card.appendChild(outputEl);
+        }
+    }
+
+    /**
+     * Extract filename from path
+     */
+    extractFileName(path) {
+        if (!path) return '';
+        return path.replace(/\\/g, '/').split('/').pop();
+    }
+
+    /**
+     * Escape HTML to prevent XSS
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    /**
+     * Show tool execution indicator (legacy - redirects to action card)
+     */
+    showToolIndicator(toolName) {
+        this.showActionCard(toolName, {}, 'running');
+    }
+
+    /**
+     * Hide tool execution indicator (legacy - redirects to update)
+     */
+    hideToolIndicator(toolName) {
+        this.updateActionCard(toolName, 'complete');
+    }
+
+    /**
+     * Finalize streaming message - preserve action cards and append final text
      */
     finalizeStreamingMessage(content) {
         if (!this.currentStreamingElement) return;
@@ -343,8 +577,20 @@ class AgentManager {
 
         if (contentEl) {
             contentEl.classList.remove('streaming-content');
-            const formattedContent = this.formatMessage(content);
-            contentEl.innerHTML = formattedContent;
+
+            // Remove streaming cursor
+            const cursor = contentEl.querySelector('.streaming-cursor');
+            if (cursor) cursor.remove();
+
+            // Remove the streaming-text wrapper cursor if present
+            const streamingText = contentEl.querySelector('.streaming-text');
+            if (streamingText) {
+                const innerCursor = streamingText.querySelector('.streaming-cursor');
+                if (innerCursor) innerCursor.remove();
+            }
+
+            // NOTE: Content is already rendered by updateStreamingMessage during streaming
+            // We just need to finalize (remove cursor, add buttons) - no need to re-append content
 
             // Add action buttons
             const actionsDiv = document.createElement('div');
@@ -356,12 +602,13 @@ class AgentManager {
             contentEl.parentElement.appendChild(actionsDiv);
 
             // Add handlers
+            const contentToUse = this.stripThinkTags(content);
             actionsDiv.querySelectorAll('button').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const action = btn.dataset.action;
-                    const code = this.extractCode(content);
+                    const code = this.extractCode(contentToUse);
                     if (action === 'copy') {
-                        navigator.clipboard.writeText(code || content);
+                        navigator.clipboard.writeText(code || contentToUse);
                     } else if (action === 'insert' && code) {
                         window.editorManager?.insertAtCursor(code);
                     }
@@ -369,10 +616,20 @@ class AgentManager {
             });
         }
 
-        // Store in messages
-        this.messages.push({ role: 'assistant', content, timestamp: new Date() });
+        // Store in messages (without think tags)
+        const cleanForStorage = this.stripThinkTags(content);
+        this.messages.push({ role: 'assistant', content: cleanForStorage, timestamp: new Date() });
 
         this.currentStreamingElement = null;
+    }
+
+    /**
+     * Strip <think>...</think> tags from content
+     */
+    stripThinkTags(content) {
+        if (!content) return '';
+        // Remove <think>...</think> blocks (including multiline)
+        return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
     }
 
     /**
@@ -706,6 +963,19 @@ How can I help you today?`;
                 this.togglePanel();
             }
         });
+
+        // Model Selector click
+        const modelSelector = document.getElementById('modelSelector');
+        modelSelector?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleModelDropdown();
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', () => {
+            const dropdown = document.getElementById('modelDropdown');
+            if (dropdown) dropdown.style.display = 'none';
+        });
     }
 
     /**
@@ -720,12 +990,122 @@ How can I help you today?`;
     }
 
     /**
-     * Set current model
+     * Set current model (indicator update only)
      */
     setModel(model) {
         this.currentModel = model;
-        document.getElementById('currentModel').textContent =
-            model === 'auto' ? 'Auto' : model;
+        // Update the small indicator below input
+        const indicator = document.getElementById('currentModel');
+        if (indicator) {
+            indicator.textContent = model === 'auto' ? 'Auto' : model;
+        }
+    }
+
+    /**
+     * Load available models from backend
+     */
+    async loadAvailableModels() {
+        try {
+            const baseUrl = window.CONFIG?.API_URL || 'http://localhost:8000';
+            const response = await fetch(`${baseUrl}/api/agent/models/list`);
+            if (response.ok) {
+                const data = await response.json();
+                this.renderModelOptions(data.models);
+            }
+        } catch (error) {
+            console.warn('Failed to load models:', error);
+        }
+    }
+
+    /**
+     * Render model options in dropdown
+     */
+    renderModelOptions(models) {
+        const optionsContainer = document.getElementById('modelDropdownOptions');
+        if (!optionsContainer) return;
+
+        // Reserve Auto option
+        const autoOption = `
+            <div class="model-option ${this.selectedModel === 'Auto' ? 'selected' : ''}" data-model="Auto">
+                <i data-lucide="zap"></i>
+                <span>Auto (Recommended)</span>
+            </div>
+        `;
+
+        let html = autoOption;
+
+        models.forEach(m => {
+            const modelValue = `${m.provider}/${m.model_key}`;
+            const isSelected = this.selectedModel === modelValue;
+            html += `
+                <div class="model-option ${isSelected ? 'selected' : ''}" data-model="${modelValue}">
+                    <i data-lucide="cpu"></i>
+                    <span>${m.display_name}</span>
+                </div>
+            `;
+        });
+
+        optionsContainer.innerHTML = html;
+
+        // Re-initialize icons
+        if (window.lucide) {
+            window.lucide.createIcons({
+                attrs: {
+                    class: 'lucide-icon'
+                },
+                nameAttr: 'data-lucide'
+            });
+        }
+
+        // Add click listeners to options
+        optionsContainer.querySelectorAll('.model-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                this.selectModel(opt.dataset.model);
+            });
+        });
+    }
+
+    /**
+     * Toggle model selection dropdown
+     */
+    toggleModelDropdown() {
+        const dropdown = document.getElementById('modelDropdown');
+        if (!dropdown) return;
+
+        if (dropdown.style.display === 'none') {
+            dropdown.style.display = 'flex';
+        } else {
+            dropdown.style.display = 'none';
+        }
+    }
+
+    /**
+     * Select a model
+     */
+    selectModel(modelValue) {
+        this.selectedModel = modelValue;
+        localStorage.setItem('quasar_selected_model', modelValue);
+
+        // Update UI
+        this.updateModelSelectionUI();
+
+        // Refresh dropdown selection classes
+        document.querySelectorAll('.model-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.model === modelValue);
+        });
+
+        // Hide dropdown
+        document.getElementById('modelDropdown').style.display = 'none';
+    }
+
+    /**
+     * Update model selection text in status bar
+     */
+    updateModelSelectionUI() {
+        const displayEl = document.getElementById('selectedModel');
+        if (displayEl) {
+            displayEl.textContent = this.selectedModel;
+        }
     }
 }
 

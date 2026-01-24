@@ -9,9 +9,7 @@ class FileTreeManager {
         this.fileTree = [];
         this.selectedItem = null;
         this.expandedFolders = new Set();
-        this.pollingInterval = null;  // For real-time updates
-        this.lastTreeHash = null;     // To detect changes
-        this.isPollingActive = false;
+        this.recentFolders = JSON.parse(localStorage.getItem('quasar_recent_folders') || '[]');
     }
 
     /**
@@ -19,7 +17,16 @@ class FileTreeManager {
      */
     init() {
         this.setupEventListeners();
-        this.showPlaceholder();
+        this.setupModalEventListeners();
+
+        // Try to load the last opened folder
+        const lastFolder = localStorage.getItem('quasar_last_folder');
+        if (lastFolder) {
+            console.log('📂 Attempting to auto-load last folder:', lastFolder);
+            this.openFolder(lastFolder);
+        } else {
+            this.showPlaceholder();
+        }
     }
 
     /**
@@ -37,11 +44,7 @@ class FileTreeManager {
             const data = await response.json();
             this.rootPath = data.workspace;
             this.fileTree = data.tree;
-            this.lastTreeHash = this.getTreeHash(data.tree);  // Initialize hash
             this.render();
-
-            // Start polling for real-time updates
-            this.startPolling();
 
         } catch (error) {
             console.error('Failed to load file tree:', error);
@@ -50,15 +53,89 @@ class FileTreeManager {
     }
 
     /**
-     * Open folder dialog - prompts user for folder path
+     * Show the folder selection modal
      */
-    async openFolderDialog() {
-        const folderPath = prompt(
-            'Enter the full path to your project folder:\n\nExample: C:\\Users\\YourName\\projects\\my-app'
-        );
+    showOpenFolderModal() {
+        const modal = document.getElementById('folderModalOverlay');
+        const input = document.getElementById('folderPathInput');
+        const recentList = document.getElementById('recentFoldersList');
 
+        if (!modal || !input || !recentList) return;
+
+        // Clear input
+        input.value = this.rootPath || '';
+
+        // Render recent folders
+        this.renderRecentFolders();
+
+        // Show modal
+        modal.style.display = 'flex';
+        input.focus();
+    }
+
+    /**
+     * Render the list of recent folders in the modal
+     */
+    renderRecentFolders() {
+        const recentList = document.getElementById('recentFoldersList');
+        const recentSection = document.getElementById('recentFoldersSection');
+
+        if (!recentList || !recentSection) return;
+
+        if (this.recentFolders.length === 0) {
+            recentSection.style.display = 'none';
+            return;
+        }
+
+        recentSection.style.display = 'block';
+
+        recentList.innerHTML = this.recentFolders.map(path => {
+            const name = path.split(/[\\/]/).pop() || path;
+            return `
+                <div class="recent-folder-item" data-path="${path}">
+                    <i data-lucide="folder" class="recent-folder-icon"></i>
+                    <div class="recent-folder-info">
+                        <span class="recent-folder-name">${name}</span>
+                        <span class="recent-folder-path">${path}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        if (window.lucide) lucide.createIcons();
+
+        // Add click handlers to recent items
+        recentList.querySelectorAll('.recent-folder-item').forEach(item => {
+            item.addEventListener('click', () => {
+                document.getElementById('folderPathInput').value = item.dataset.path;
+                this.handleConfirmFolder();
+            });
+        });
+    }
+
+    /**
+     * Handle folder confirmation from modal
+     */
+    async handleConfirmFolder() {
+        const folderPath = document.getElementById('folderPathInput').value.trim();
         if (!folderPath) return;
 
+        await this.openFolder(folderPath);
+        this.closeFolderModal();
+    }
+
+    /**
+     * Close the folder selection modal
+     */
+    closeFolderModal() {
+        const modal = document.getElementById('folderModalOverlay');
+        if (modal) modal.style.display = 'none';
+    }
+
+    /**
+     * Open a specific folder by path
+     */
+    async openFolder(folderPath) {
         try {
             const response = await fetch(`${CONFIG.API_BASE_URL}/files/open`, {
                 method: 'POST',
@@ -74,13 +151,12 @@ class FileTreeManager {
             const data = await response.json();
             this.rootPath = data.workspace;
             this.fileTree = data.tree;
-            this.lastTreeHash = this.getTreeHash(data.tree);  // Initialize hash
             this.render();
 
             console.log('✅ Opened folder:', this.rootPath);
 
-            // Start polling for real-time updates
-            this.startPolling();
+            // Save to persistence
+            this.saveToPersistence(this.rootPath);
 
             // Reconnect terminal to use the new workspace path
             if (window.terminalManager) {
@@ -89,8 +165,35 @@ class FileTreeManager {
 
         } catch (error) {
             console.error('Failed to open folder:', error);
-            alert('Error: ' + error.message);
+            // If auto-loading failed, show placeholder or error
+            if (!this.rootPath) {
+                this.showError('Could not open folder. ' + error.message);
+            } else {
+                alert('Error: ' + error.message);
+            }
         }
+    }
+
+    /**
+     * Save current folder to localStorage and update recent history
+     */
+    saveToPersistence(path) {
+        // Save as last opened
+        localStorage.setItem('quasar_last_folder', path);
+
+        // Update recent folders (max 3, unique)
+        let recent = this.recentFolders.filter(p => p !== path);
+        recent.unshift(path);
+        this.recentFolders = recent.slice(0, 3);
+
+        localStorage.setItem('quasar_recent_folders', JSON.stringify(this.recentFolders));
+    }
+
+    /**
+     * Open folder dialog - now shows our custom modal instead of prompt
+     */
+    async openFolderDialog() {
+        this.showOpenFolderModal();
     }
 
     /**
@@ -288,6 +391,12 @@ class FileTreeManager {
      * Open a file
      */
     async openFile(path) {
+        // Guard: Ensure workspace is set
+        if (!this.rootPath) {
+            console.warn('⚠️ Cannot open file: No workspace folder is open.');
+            return;
+        }
+
         try {
             // Fetch file content from backend API
             const response = await fetch(`${CONFIG.API_BASE_URL}/files/read?path=${encodeURIComponent(path)}`);
@@ -711,6 +820,34 @@ dist/
     }
 
     /**
+     * Setup modal specific event listeners
+     */
+    setupModalEventListeners() {
+        const modal = document.getElementById('folderModalOverlay');
+        const closeBtn = document.getElementById('closeFolderModalBtn');
+        const cancelBtn = document.getElementById('cancelFolderBtn');
+        const confirmBtn = document.getElementById('confirmFolderBtn');
+        const input = document.getElementById('folderPathInput');
+
+        closeBtn?.addEventListener('click', () => this.closeFolderModal());
+        cancelBtn?.addEventListener('click', () => this.closeFolderModal());
+        confirmBtn?.addEventListener('click', () => this.handleConfirmFolder());
+
+        // Close on overlay click
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) this.closeFolderModal();
+        });
+
+        // Enter key in input
+        input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.handleConfirmFolder();
+            }
+        });
+    }
+
+    /**
      * Setup event listeners
      */
     setupEventListeners() {
@@ -722,6 +859,11 @@ dist/
         // New folder button
         document.getElementById('newFolderBtn')?.addEventListener('click', () => {
             this.createNewFolder(this.selectedItem || this.rootPath);
+        });
+
+        // Open folder button
+        document.getElementById('openFolderActionBtn')?.addEventListener('click', () => {
+            this.openFolderDialog();
         });
 
         // Refresh button
@@ -736,57 +878,6 @@ dist/
                 this.togglePanel();
             }
         });
-    }
-
-    /**
-     * Start polling for file tree changes (real-time updates)
-     */
-    startPolling() {
-        if (this.isPollingActive) return;  // Already polling
-
-        this.isPollingActive = true;
-        console.log('🔄 Started file tree polling (every 2s)');
-
-        this.pollingInterval = setInterval(async () => {
-            try {
-                const response = await fetch(`${CONFIG.API_BASE_URL}/files/tree`);
-                if (!response.ok) return;  // Workspace might be closed
-
-                const data = await response.json();
-                const newHash = this.getTreeHash(data.tree);
-
-                // Only update if tree changed
-                if (this.lastTreeHash && newHash !== this.lastTreeHash) {
-                    console.log('📁 File tree changed, updating...');
-                    this.fileTree = data.tree;
-                    this.render();
-                }
-
-                this.lastTreeHash = newHash;
-            } catch (error) {
-                // Silently handle errors (workspace might be closed)
-            }
-        }, 2000);  // Poll every 2 seconds
-    }
-
-    /**
-     * Stop polling for file tree changes
-     */
-    stopPolling() {
-        if (this.pollingInterval) {
-            clearInterval(this.pollingInterval);
-            this.pollingInterval = null;
-            this.isPollingActive = false;
-            this.lastTreeHash = null;
-            console.log('⏸️  Stopped file tree polling');
-        }
-    }
-
-    /**
-     * Generate a hash of the file tree for change detection
-     */
-    getTreeHash(tree) {
-        return JSON.stringify(tree);  // Simple hash using JSON string
     }
 
     /**

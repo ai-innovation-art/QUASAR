@@ -75,12 +75,11 @@ def build_file_tree(folder_path: Path, relative_base: str = "") -> List[dict]:
     
     try:
         for entry in sorted(folder_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-            # Skip only: hidden files (except .venv), __pycache__, node_modules, .git
+            # Skip only these specific directories (common large/internal dirs)
             if entry.name in ['__pycache__', 'node_modules', '.git']:
                 continue
-            # Skip hidden files, but allow .venv (not .env - that's for credentials)
-            if entry.name.startswith('.') and entry.name != '.venv':
-                continue
+            # Show ALL files including dotfiles (.env, .gitignore, etc.)
+            # User wants to see everything in the folder
             
             relative_path = f"{relative_base}/{entry.name}" if relative_base else entry.name
             

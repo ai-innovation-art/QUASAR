@@ -200,8 +200,10 @@ Happy coding! 💻
      */
     getSelection() {
         if (!this.editor) return '';
+        const model = this.editor.getModel();
+        if (!model) return '';  // No file open
         const selection = this.editor.getSelection();
-        return this.editor.getModel().getValueInRange(selection);
+        return model.getValueInRange(selection);
     }
 
     /**

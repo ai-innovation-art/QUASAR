@@ -61,6 +61,9 @@
                     <button class="icon-btn" id="newFolderBtn" title="New Folder">
                         <i data-lucide="folder-plus"></i>
                     </button>
+                    <button class="icon-btn" id="openFolderActionBtn" title="Open Folder">
+                        <i data-lucide="folder-search"></i>
+                    </button>
                     <button class="icon-btn" id="refreshTreeBtn" title="Refresh">
                         <i data-lucide="refresh-cw"></i>
                     </button>
@@ -189,12 +192,55 @@
             <span class="status-item" id="statusEncoding">
                 UTF-8
             </span>
-            <span class="status-item connected" id="statusConnection">
-                <i data-lucide="wifi"></i>
-                <span>Ready</span>
+            <span class="status-item" id="modelSelector" title="Click to change model">
+                <i data-lucide="cpu"></i>
+                <span id="selectedModel">Auto</span>
             </span>
         </div>
     </footer>
+
+    <!-- Model Selection Dropdown (hidden by default) -->
+    <div class="model-dropdown" id="modelDropdown" style="display: none;">
+        <div class="model-dropdown-header">Select Model</div>
+        <div class="model-dropdown-options" id="modelDropdownOptions">
+            <div class="model-option selected" data-model="Auto">
+                <i data-lucide="zap"></i>
+                <span>Auto (Recommended)</span>
+            </div>
+            <!-- Other options loaded dynamically -->
+        </div>
+    </div>
+
+    <!-- Folder Selection Modal -->
+    <div class="modal-overlay" id="folderModalOverlay" style="display: none;">
+        <div class="modal" id="folderModal">
+            <div class="modal-header">
+                <h3>Open Folder</h3>
+                <button class="icon-btn" id="closeFolderModalBtn">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label for="folderPathInput">Folder Path</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="folderPathInput" placeholder="C:\path\to\your\project">
+                    </div>
+                </div>
+
+                <div class="recent-folders-section" id="recentFoldersSection">
+                    <div class="section-label">Recent Folders</div>
+                    <div class="recent-folders-list" id="recentFoldersList">
+                        <!-- Recent folders will be rendered here -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancelFolderBtn">Cancel</button>
+                <button class="btn-primary" id="confirmFolderBtn">Open Folder</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Scripts -->
     <script src="js/config.js"></script>

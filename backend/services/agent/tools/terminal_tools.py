@@ -107,7 +107,7 @@ def _run_command_sync(command: str, cwd: str, timeout: int = 30) -> Dict[str, An
 
 
 @tool
-def run_terminal_command(command: str, timeout: int = 30) -> Dict[str, Any]:
+def run_terminal_command(command: str, timeout: int = 300) -> Dict[str, Any]:
     """
     Execute a shell command in the workspace.
     
@@ -115,7 +115,7 @@ def run_terminal_command(command: str, timeout: int = 30) -> Dict[str, Any]:
     
     Args:
         command: Shell command to execute (e.g., "pip install requests", "python main.py")
-        timeout: Maximum time to wait for command (default: 30 seconds)
+        timeout: Maximum time to wait for command (default: 300 seconds / 5 min)
         
     Returns:
         Dictionary with output, exit code, and success status
@@ -206,8 +206,8 @@ def run_pip_command(action: str, packages: str = "") -> Dict[str, Any]:
     if packages:
         command += f" {packages}"
     
-    # Longer timeout for install
-    timeout = 120 if action == "install" else 30
+    # Longer timeout for install (5 min)
+    timeout = 300 if action == "install" else 120
     
     return _run_command_sync(command, str(get_workspace()), timeout)
 

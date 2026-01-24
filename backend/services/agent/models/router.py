@@ -91,7 +91,7 @@ class ModelRouter:
     def get_model_for_provider(
         self,
         provider: str,
-        model_name: str = None,
+        model_name_or_key: str = None,
         temperature: float = 0.7,
         **kwargs
     ) -> Optional[Any]:
@@ -100,7 +100,7 @@ class ModelRouter:
         
         Args:
             provider: Provider name (ollama, cerebras, groq, cloudflare)
-            model_name: Model name (uses default if not specified)
+            model_name_or_key: Model name OR config key (e.g., "code" -> "glm-4.7:cloud")
             temperature: Sampling temperature
             
         Returns:
@@ -114,7 +114,15 @@ class ModelRouter:
             "cloudflare": "@cf/meta/llama-3.1-70b-instruct"
         }
         
-        model_name = model_name or defaults.get(provider, "")
+        model_name = model_name_or_key or defaults.get(provider, "")
+        
+        # Check if model_name is actually a config key (like "code", "chat", etc.)
+        # If so, look up the actual model name from the config
+        provider_config = AgentConfig.get_provider(provider)
+        if provider_config and model_name_or_key in provider_config.models:
+            actual_model = provider_config.models[model_name_or_key]
+            model_name = actual_model.name
+            logger.debug(f"Resolved config key '{model_name_or_key}' -> model '{model_name}'")
         
         return self.providers.get_model(
             provider=provider,

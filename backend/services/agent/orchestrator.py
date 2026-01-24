@@ -113,6 +113,284 @@ Respond with JSON only:
 }}
 """
 
+# Implicit rules that the agent MUST follow
+IMPLICIT_RULES_PROMPT = """
+
+YOU ARE A COLLABORATIVE AI ASSISTANT. The human is your partner, not just a recipient.
+
+═══════════════════════════════════════════════════════════════
+CORE PRINCIPLE: COMMUNICATE, DON'T JUST EXECUTE
+═══════════════════════════════════════════════════════════════
+
+Before ANY tool call, explain what you're about to do and why.
+After ANY tool call, share what you observed and learned.
+This keeps the human informed and allows them to guide you.
+
+GOOD EXAMPLE:
+"I'll read Tasks.md to understand our current progress..."
+[tool call: read_file]
+"I see we've completed Phase 1 and 2. Phase 3 has 4 tasks remaining. 
+Should I start with 'Implement task validation'?"
+
+BAD EXAMPLE:
+[tool call: read_file]
+[tool call: create_file]
+[tool call: run_terminal_command]
+(No explanation, human has no idea what's happening)
+
+═══════════════════════════════════════════════════════════════
+INCREMENTAL DEVELOPMENT: ONE STEP AT A TIME
+═══════════════════════════════════════════════════════════════
+
+SIMPLE TASKS (move, delete, rename, single file edit):
+→ Complete in 1-2 tool calls. Be direct.
+
+COMPLEX TASKS (multi-file projects, phase-based work):
+→ Work on ONE sub-task at a time
+→ After completing each sub-task, pause and report to user
+→ Let the user decide whether to continue or take over
+→ Example: "I've set up the database models. Want me to proceed 
+  with the API endpoints, or would you like to review first?"
+
+NEVER try to complete an entire phase or project in one go.
+The human may want to modify, test, or take a different approach.
+
+═══════════════════════════════════════════════════════════════
+SMART FILE DISCOVERY
+═══════════════════════════════════════════════════════════════
+
+If a file is not found (like Task.md), search for alternatives:
+- Try common variations: Tasks.md, task.md, TODO.md, tasks.txt
+- Use list_files to see what's available
+- Report what you found to the user
+
+═══════════════════════════════════════════════════════════════
+DIRECT ACTIONS (No over-thinking needed)
+═══════════════════════════════════════════════════════════════
+
+"delete X" → delete_file(X) directly. Don't read it first.
+"move X to Y" → move_file(X, Y) directly. Don't read it first.
+"create X" → create_file(X). Don't search first.
+"run X" → run_terminal_command(X). Actually run it.
+"fix X" → Read only if needed to understand the error.
+
+═══════════════════════════════════════════════════════════════
+FILE EDITING: USE PATCH_FILE FOR EXISTING FILES
+═══════════════════════════════════════════════════════════════
+
+CRITICAL: When modifying an EXISTING file, use patch_file() for targeted edits!
+
+✅ CORRECT (preserves rest of file):
+  patch_file("config.py", "DEBUG = False", "DEBUG = True")
+  patch_file("utils.py", "def old_func():", "def new_func():")
+  
+❌ WRONG (overwrites entire file):
+  create_file("config.py", "DEBUG = True")  ← Loses all other content!
+  modify_file("config.py", "DEBUG = True")  ← Also requires full content!
+
+WHEN TO USE EACH TOOL:
+- create_file → NEW files only (file doesn't exist)
+- modify_file → When rewriting ENTIRE file (rare)
+- patch_file → Updating SECTIONS of existing files (most common!)
+
+═══════════════════════════════════════════════════════════════
+AVOID LOOPS AND RETRIES
+═══════════════════════════════════════════════════════════════
+
+If a tool fails:
+1. Explain the error to the user
+2. Try ONE alternative approach
+3. If still failing, ASK the user for guidance
+
+NEVER run the same command more than twice.
+NEVER call the same tool repeatedly without explaining why.
+
+═══════════════════════════════════════════════════════════════
+PROJECT TRACKING (Task.md)
+═══════════════════════════════════════════════════════════════
+
+For multi-file projects:
+- Create or use existing Task.md/Tasks.md to track progress
+- Read Task.md FIRST before any update
+- Use patch_file() for targeted updates (NOT modify_file or create_file):
+  
+  CORRECT: patch_file("Task.md", "- [ ] Setup config", "- [x] Setup config")
+  WRONG: create_file("Task.md", "...only phase 1...")  ← Overwrites everything!
+  
+- patch_file PRESERVES existing content and only changes what you specify
+- Update checkboxes: [ ] → [x] as tasks complete
+
+═══════════════════════════════════════════════════════════════
+LARGE FILES
+═══════════════════════════════════════════════════════════════
+
+If read_file returns "is_large_file": true:
+- Use read_file_chunk(path, start_line, end_line)
+- Read only the sections you need
+
+═══════════════════════════════════════════════════════════════
+TERMINAL COMMANDS: LET THE USER RUN TESTS
+═══════════════════════════════════════════════════════════════
+
+For TESTING and VALIDATION (pytest, npm test, etc.):
+- DON'T run tests automatically
+- Instead, TELL the user the commands to run:
+  "You can test this with: `python -m pytest tests/`"
+- The user can run it themselves and share results if needed
+
+ONLY run terminal commands automatically when:
+- User explicitly says "run it" or "test it"
+- Installing dependencies (pip install)
+- Creating/initializing projects
+- User specifically requests execution
+
+This saves tokens and gives the user full control over testing.
+
+═══════════════════════════════════════════════════════════════
+THE GOLDEN RULE
+═══════════════════════════════════════════════════════════════
+
+Always give the human context and control.
+They should never wonder "what is the AI doing?" or "why did it do that?"
+"""
+
+
+
+class _LoopDetector:
+    """Detects if the agent is stuck in a loop calling the same tools repeatedly."""
+    
+    def __init__(self, window_size: int = 5, threshold: int = 3):
+        self.history = []
+        self.window_size = window_size
+        self.threshold = threshold
+    
+    def add_call(self, tool_name: str, tool_args: dict) -> None:
+        """Add a tool call to history."""
+        # Create a signature for this call (tool name + key args)
+        key_args = str(sorted(tool_args.items())[:3]) if tool_args else ""
+        call_signature = f"{tool_name}:{key_args}"
+        
+        self.history.append(call_signature)
+        if len(self.history) > self.window_size:
+            self.history.pop(0)
+    
+    def is_looping(self) -> bool:
+        """Check if the same call is repeating too many times."""
+        if len(self.history) < self.threshold:
+            return False
+        
+        # Check if last N calls are identical
+        recent = self.history[-self.threshold:]
+        return len(set(recent)) == 1  # All identical
+    
+    def reset(self) -> None:
+        """Reset the detector."""
+        self.history = []
+
+
+def _get_progress_message(tool_name: str, tool_args: dict) -> str:
+    """Generate a human-readable progress message for a tool call."""
+    
+    # Extract common args
+    path = tool_args.get('path', tool_args.get('file_path', ''))
+    if path:
+        # Get just the filename
+        path = path.replace('\\', '/').split('/')[-1]
+    
+    messages = {
+        'read_file': f"Reading `{path}`...",
+        'create_file': f"Creating `{path}`...",  
+        'modify_file': f"Modifying `{path}`...",
+        'delete_file': f"Deleting `{path}`...",
+        'list_files': "Scanning directory structure...",
+        'search_code': f"Searching for pattern in codebase...",
+        'run_terminal_command': f"Running command...",
+    }
+    
+    return messages.get(tool_name, f"Executing {tool_name}...")
+
+
+def _generate_tool_explanation(tool_name: str, tool_args: dict, total_tools: int) -> str:
+    """Generate a conversational explanation when model doesn't provide text before tools."""
+    
+    # Extract common args
+    path = tool_args.get('path', tool_args.get('file_path', ''))
+    if path:
+        path = path.replace('\\', '/').split('/')[-1]  # Get filename only
+    
+    explanations = {
+        'read_file': f"Let me read `{path}` to understand the current state...",
+        'create_file': f"I'll create `{path}` with the implementation...",
+        'modify_file': f"I'll update `{path}` with the necessary changes...",
+        'delete_file': f"I'll remove `{path}` as it's no longer needed...",
+        'list_files': "Let me scan the directory to see what files we have...",
+        'search_code': "I'll search the codebase for relevant code...",
+        'run_terminal_command': f"I'll run a command to {tool_args.get('command', 'execute this task')[:30]}...",
+        'move_file': f"I'll move `{tool_args.get('source', 'file')}` to its new location...",
+    }
+    
+    base = explanations.get(tool_name, f"I'll use `{tool_name}` to help with this...")
+    
+    if total_tools > 1:
+        base += f" (and {total_tools - 1} more action{'s' if total_tools > 2 else ''})"
+    
+    return base
+
+
+def _generate_observation(tool_name: str, tool_args: dict, result: str) -> str:
+    """Generate a human-readable observation after a tool completes."""
+    
+    result_lower = result.lower() if result else ""
+    result_start = result[:200].lower() if result else ""  # Check only beginning of result
+    path = tool_args.get('path', tool_args.get('file_path', ''))
+    if path:
+        path = path.replace('\\', '/').split('/')[-1]
+    
+    # Handle errors/failures - check for actual ERROR patterns, not just keywords in content
+    # Error results typically start with "Error:" or contain specific error messages
+    is_error = (
+        result_start.startswith("error:") or
+        result_start.startswith("error -") or
+        "filenotfounderror" in result_start or
+        "does not exist" in result_start or
+        "no such file" in result_start or
+        "failed:" in result_start or
+        "permission denied" in result_start
+    )
+    
+    if is_error:
+        if tool_name == "read_file":
+            return f"⚠️ `{path}` not found. Let me search for similar files..."
+        elif tool_name == "run_terminal_command":
+            return "⚠️ Command failed. Let me check the error and try a fix..."
+        elif tool_name == "list_files":
+            return "⚠️ Could not list directory. Checking permissions..."
+        else:
+            return f"⚠️ {tool_name} encountered an issue. Adjusting approach..."
+    
+    # Handle successes - don't show observation for reads (too verbose)
+    if tool_name == "read_file":
+        return None  # Success reads don't need observation
+    
+    elif tool_name == "list_files":
+        return "✓ Found the directory structure. Looking for relevant files..."
+    
+    elif tool_name == "create_file":
+        return f"✓ Created `{path}` successfully."
+    
+    elif tool_name == "modify_file":
+        return f"✓ Updated `{path}` with the changes."
+    
+    elif tool_name == "delete_file":
+        return f"✓ Deleted `{path}`."
+    
+    elif tool_name == "run_terminal_command":
+        if "exit_code\": 0" in result_lower or "exit code: 0" in result_lower or '"success": true' in result_lower:
+            return "✓ Command completed successfully."
+        return None
+    
+    return None  # No observation needed for other tools
+
 
 class Orchestrator:
     """
@@ -343,7 +621,8 @@ class Orchestrator:
         file_content: str = None,
         selected_code: str = None,
         terminal_output: str = None,
-        error_message: str = None
+        error_message: str = None,
+        selected_model: Optional[str] = None
     ) -> AgentResponse:
         """
         Process a user query through the full agent pipeline.
@@ -425,13 +704,15 @@ class Orchestrator:
             # Execute with agentic tool loop
             return await self._agentic_loop(
                 messages=messages,
-                task_type=classification.task_type.value
+                task_type=classification.task_type.value,
+                selected_model=selected_model
             )
         else:
             # Simple invocation without tools
             return await self._simple_invoke(
                 messages=messages,
-                task_type=classification.task_type.value
+                task_type=classification.task_type.value,
+                selected_model=selected_model
             )
     
     def _should_use_tools(self, task_type: str) -> bool:
@@ -462,16 +743,28 @@ After completing all necessary tool operations, provide your final response to t
     async def _simple_invoke(
         self,
         messages: list,
-        task_type: str
+        task_type: str,
+        selected_model: Optional[str] = None
     ) -> AgentResponse:
         """Simple model invocation without tools."""
         agent_logger.info(f"🔄 Simple invoke (no tools) for task: {task_type}")
         
         try:
-            response, provider, model_name = await self.model_router.invoke_with_fallback(
-                task_type=task_type,
-                messages=messages
-            )
+            if selected_model and selected_model != "Auto":
+                # User selected specific model - NO fallback
+                provider, model_key = selected_model.split("/")
+                model = self.model_router.get_model_for_provider(provider, model_key)
+                if model is None:
+                    raise Exception(f"Could not load selected model: {selected_model}")
+                    
+                response = await model.ainvoke(messages)
+                model_name = model_key # Will be resolved in get_model_for_provider
+            else:
+                # Auto mode - use fallback chain
+                response, provider, model_name = await self.model_router.invoke_with_fallback(
+                    task_type=task_type,
+                    messages=messages
+                )
             
             if response is None:
                 agent_logger.error("❌ All models failed, including fallbacks")
@@ -487,7 +780,7 @@ After completing all necessary tool operations, provide your final response to t
             agent_logger.info(f"✅ Model response received: {provider}/{model_name}")
             
             # Record assistant response in context
-            self.context_manager.add_message("assistant", response.content[:500], task_type)
+            self.context_manager.add_message("assistant", response.content, task_type)
             
             return AgentResponse(
                 success=True,
@@ -515,7 +808,8 @@ After completing all necessary tool operations, provide your final response to t
     async def _agentic_loop(
         self,
         messages: list,
-        task_type: str
+        task_type: str,
+        selected_model: Optional[str] = None
     ) -> AgentResponse:
         """
         Execute an agentic loop with tool calling.
@@ -535,29 +829,27 @@ After completing all necessary tool operations, provide your final response to t
         # Create tool executor
         tool_executor = ToolExecutor(tools, timeout_seconds=AgentConfig.TOOL_TIMEOUT_SECONDS)
         
-        # Get model for this task (we'll bind tools to it)
-        model = self.model_router.get_model(task_type)
-        
-        if model is None:
-            agent_logger.error("❌ No model available for agentic loop")
-            return AgentResponse(
-                success=False,
-                response="No model available. Please check if Ollama is running.",
-                task_type=task_type,
-                model_used="none",
-                provider="none",
-                error="No model available"
-            )
-        
-        # Get model info for logging
-        models_chain = AgentConfig.get_models_for_task(task_type)
-        if models_chain:
-            provider, model_key = models_chain[0]
-            provider_config = AgentConfig.get_provider(provider)
-            model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+        # Get model for this task
+        if selected_model and selected_model != "Auto":
+            # User selected specific model
+            provider, model_key = selected_model.split("/")
+            model = self.model_router.get_model_for_provider(provider, model_key)
+            model_name = model_key
+            use_fallback = False
         else:
-            provider = "unknown"
-            model_name = "unknown"
+            # Auto mode
+            model = self.model_router.get_model(task_type)
+            use_fallback = True
+            
+            # Get model info for logging
+            models_chain = AgentConfig.get_models_for_task(task_type)
+            if models_chain:
+                provider, model_key = models_chain[0]
+                provider_config = AgentConfig.get_provider(provider)
+                model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+            else:
+                provider = "unknown"
+                model_name = "unknown"
         
         # Bind tools to the model
         try:
@@ -610,7 +902,7 @@ After completing all necessary tool operations, provide your final response to t
                     log_agentic_complete(iteration, summary["tools_used"], summary["total_calls"])
                     
                     # Record assistant response in context
-                    self.context_manager.add_message("assistant", response.content[:500], task_type)
+                    self.context_manager.add_message("assistant", response.content, task_type)
                     
                     # Record files modified/created in session
                     for tool_name in summary["tools_used"]:
@@ -634,6 +926,18 @@ After completing all necessary tool operations, provide your final response to t
             except Exception as e:
                 agent_logger.error(f"❌ Error in agentic loop iteration {iteration}: {e}")
                 self.context_manager.record_error(str(e))
+                
+                # Check for rate limit and fallback if enabled
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "rate limit" in error_str.lower() or "quota" in error_str.lower()
+                
+                if is_rate_limit and use_fallback:
+                    agent_logger.warning(f"⚠️ Rate limit hit in _agentic_loop, trying rotation/fallback...")
+                    # For synchronous _agentic_loop, fallback is more complex to implement mid-stream
+                    # but we can try rotating credentials for the model used
+                    self.model_router.cred_manager.rotate_credential(provider)
+                    # Note: Full mid-loop model switching for sync method is omitted for brevity 
+                    # as streaming is the primary interaction mode
                 
                 # If we had some successful tool calls, return partial result
                 summary = tool_executor.get_execution_summary()
@@ -690,7 +994,8 @@ After completing all necessary tool operations, provide your final response to t
         file_content: str = None,
         selected_code: str = None,
         terminal_output: str = None,
-        error_message: str = None
+        error_message: str = None,
+        selected_model: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Process a user query with streaming responses.
@@ -761,40 +1066,47 @@ After completing all necessary tool operations, provide your final response to t
             # Streaming agentic loop
             async for chunk in self._agentic_loop_stream(
                 messages=messages,
-                task_type=classification.task_type.value
+                task_type=classification.task_type.value,
+                selected_model=selected_model
             ):
                 yield chunk
         else:
             # Simple streaming without tools
             async for chunk in self._simple_stream(
                 messages=messages,
-                task_type=classification.task_type.value
+                task_type=classification.task_type.value,
+                selected_model=selected_model
             ):
                 yield chunk
     
     async def _simple_stream(
         self,
         messages: list,
-        task_type: str
+        task_type: str,
+        selected_model: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Simple streaming invocation without tools."""
         agent_logger.info(f"🔄 Simple stream (no tools) for task: {task_type}")
         
-        model = self.model_router.get_model(task_type)
-        
-        if model is None:
-            yield {"type": "error", "message": "No model available"}
-            return
-        
-        # Get model info for response
-        models_chain = AgentConfig.get_models_for_task(task_type)
-        if models_chain:
-            provider, model_key = models_chain[0]
-            provider_config = AgentConfig.get_provider(provider)
-            model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+        # Get model
+        if selected_model and selected_model != "Auto":
+            provider, model_key = selected_model.split("/")
+            model = self.model_router.get_model_for_provider(provider, model_key)
+            model_name = model_key
+            use_fallback = False
         else:
-            provider = "unknown"
-            model_name = "unknown"
+            model = self.model_router.get_model(task_type)
+            use_fallback = True
+            
+            # Get model info for response
+            models_chain = AgentConfig.get_models_for_task(task_type)
+            if models_chain:
+                provider, model_key = models_chain[0]
+                provider_config = AgentConfig.get_provider(provider)
+                model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+            else:
+                provider = "unknown"
+                model_name = "unknown"
         
         try:
             full_response = ""
@@ -809,7 +1121,7 @@ After completing all necessary tool operations, provide your final response to t
             agent_logger.info(f"✅ Stream complete: {provider}/{model_name}")
             
             # Record in context
-            self.context_manager.add_message("assistant", full_response[:500], task_type)
+            self.context_manager.add_message("assistant", full_response, task_type)
             
             yield {
                 "type": "done",
@@ -827,28 +1139,33 @@ After completing all necessary tool operations, provide your final response to t
     async def _agentic_loop_stream(
         self,
         messages: list,
-        task_type: str
+        task_type: str,
+        selected_model: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Streaming agentic loop with tool calling."""
         tools = get_tools_for_task(task_type)
         log_agentic_start(task_type, len(tools))
         
         tool_executor = ToolExecutor(tools, timeout_seconds=AgentConfig.TOOL_TIMEOUT_SECONDS)
-        model = self.model_router.get_model(task_type)
-        
-        if model is None:
-            yield {"type": "error", "message": "No model available"}
-            return
-        
-        # Get model info
-        models_chain = AgentConfig.get_models_for_task(task_type)
-        if models_chain:
-            provider, model_key = models_chain[0]
-            provider_config = AgentConfig.get_provider(provider)
-            model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+        # Get model
+        if selected_model and selected_model != "Auto":
+            provider, model_key = selected_model.split("/")
+            model = self.model_router.get_model_for_provider(provider, model_key)
+            model_name = model_key
+            use_fallback = False
         else:
-            provider = "unknown"
-            model_name = "unknown"
+            model = self.model_router.get_model(task_type)
+            use_fallback = True
+            
+            # Get model info
+            models_chain = AgentConfig.get_models_for_task(task_type)
+            if models_chain:
+                provider, model_key = models_chain[0]
+                provider_config = AgentConfig.get_provider(provider)
+                model_name = provider_config.models[model_key].name if provider_config and model_key in provider_config.models else "unknown"
+            else:
+                provider = "unknown"
+                model_name = "unknown"
         
         # Bind tools
         try:
@@ -863,6 +1180,7 @@ After completing all necessary tool operations, provide your final response to t
         max_iterations = AgentConfig.MAX_TOOL_ITERATIONS
         current_messages = list(messages)
         iteration = 0
+        loop_detector = _LoopDetector(window_size=5, threshold=3)
         
         while iteration < max_iterations:
             iteration += 1
@@ -880,19 +1198,53 @@ After completing all necessary tool operations, provide your final response to t
                     
                     current_messages.append(response)
                     
-                    # Execute tools and yield progress
+                    # Execute tools with progress messages before and after each
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("name", "") if isinstance(tool_call, dict) else getattr(tool_call, "name", "")
+                        tool_args = tool_call.get("args", {}) if isinstance(tool_call, dict) else getattr(tool_call, "args", {})
                         
-                        yield {"type": "tool_start", "tool": tool_name}
+                        # Check for loop
+                        loop_detector.add_call(tool_name, tool_args)
+                        if loop_detector.is_looping():
+                            agent_logger.warning("⚠️ Loop detected, stopping to avoid infinite execution")
+                            yield {"type": "message", "content": "⚠️ Detected repetitive actions. Stopping to avoid infinite loop."}
+                            summary = tool_executor.get_execution_summary()
+                            yield {
+                                "type": "done",
+                                "model": model_name,
+                                "provider": provider,
+                                "task_type": task_type,
+                                "iterations": iteration,
+                                "tool_calls_count": summary["total_calls"],
+                                "tools_used": summary["tools_used"],
+                                "loop_detected": True
+                            }
+                            return
                         
-                        # Execute single tool
+                        # 1. Progress message BEFORE tool
+                        progress_msg = _get_progress_message(tool_name, tool_args)
+                        yield {"type": "message", "content": progress_msg}
+                        
+                        # 2. Tool start
+                        yield {"type": "tool_start", "tool": tool_name, "args": tool_args}
+                        
+                        # 3. Execute tool
                         tool_messages = await tool_executor.execute_tool_calls([tool_call])
                         current_messages.extend(tool_messages)
                         
-                        # Get result for yield
+                        # 4. Tool complete
                         result = tool_messages[0].content if tool_messages else "completed"
-                        yield {"type": "tool_complete", "tool": tool_name, "result": result[:200]}
+                        yield {"type": "tool_complete", "tool": tool_name, "result": result}
+                        
+                        # 5. Observation AFTER tool
+                        observation = _generate_observation(tool_name, tool_args, result)
+                        if observation:
+                            yield {"type": "message", "content": observation}
+                        
+                        # 6. File tree update for file-modifying operations
+                        file_modifying_tools = ["create_file", "delete_file", "modify_file", "move_file", "rename_file"]
+                        if tool_name in file_modifying_tools:
+                            yield {"type": "file_tree_updated"}
                     
                     continue
                 else:
@@ -907,7 +1259,7 @@ After completing all necessary tool operations, provide your final response to t
                     summary = tool_executor.get_execution_summary()
                     log_agentic_complete(iteration, summary["tools_used"], summary["total_calls"])
                     
-                    self.context_manager.add_message("assistant", response.content[:500], task_type)
+                    self.context_manager.add_message("assistant", response.content, task_type)
                     
                     yield {
                         "type": "done",
@@ -921,9 +1273,82 @@ After completing all necessary tool operations, provide your final response to t
                     return
                     
             except Exception as e:
-                agent_logger.error(f"❌ Agentic stream error: {e}")
-                yield {"type": "error", "message": str(e)}
-                return
+                error_str = str(e)
+                # Check if this is a rate limit error (429)
+                if "429" in error_str or "rate limit" in error_str.lower() or "quota" in error_str.lower():
+                    agent_logger.warning(f"⚠️ Rate limit hit: {error_str[:100]}...")
+                    
+                    # STEP 1: Always try rotating credentials within same provider first
+                    current_provider = provider
+                    cred_rotated = self.model_router.cred_manager.rotate_credential(current_provider)
+                    
+                    if cred_rotated:
+                        agent_logger.info(f"🔄 Rotated to next API key for {current_provider}")
+                        yield {"type": "message", "content": f"⚠️ Rate limit hit. Trying next API key for {current_provider}..."}
+                        
+                        try:
+                            # Get fresh model with rotated credentials
+                            # If pinned, we need to ensure we get the same model again
+                            if selected_model and selected_model != "Auto":
+                                prov, m_key = selected_model.split("/")
+                                rotated_model = self.model_router.get_model_for_provider(prov, m_key)
+                            else:
+                                rotated_model = self.model_router.get_model(task_type)
+                                
+                            if rotated_model:
+                                model_with_tools = rotated_model.bind_tools(tools)
+                                agent_logger.info(f"✅ Credential rotation successful for {current_provider}")
+                                yield {"type": "message", "content": f"✓ Using next API key for {current_provider}"}
+                                iteration -= 1  # Retry this iteration
+                                continue
+                        except Exception as rot_error:
+                            agent_logger.warning(f"⚠️ Credential rotation failed: {rot_error}")
+                    
+                    # STEP 2: Try fallback providers ONLY IF use_fallback is true (Auto mode)
+                    if use_fallback:
+                        models_chain = AgentConfig.get_models_for_task(task_type)
+                        if models_chain and len(models_chain) > 1:
+                            for fallback_idx in range(1, len(models_chain)):
+                                fallback_provider, fallback_model_key = models_chain[fallback_idx]
+                                agent_logger.info(f"🔄 Trying fallback: {fallback_provider}/{fallback_model_key}")
+                                
+                                yield {"type": "message", "content": f"⚠️ Switching to {fallback_provider}..."}
+                                
+                                try:
+                                    fallback_model = self.model_router.get_model_for_provider(fallback_provider, fallback_model_key)
+                                    if fallback_model:
+                                        provider_config = AgentConfig.get_provider(fallback_provider)
+                                        model_name = provider_config.models[fallback_model_key].name if provider_config and fallback_model_key in provider_config.models else "unknown"
+                                        provider = fallback_provider
+                                        
+                                        # Rebind tools with fallback model
+                                        model_with_tools = fallback_model.bind_tools(tools)
+                                        agent_logger.info(f"✅ Fallback successful: {fallback_provider}/{model_name}")
+                                        yield {"type": "message", "content": f"✓ Using {fallback_provider}/{model_name}"}
+                                        
+                                        # Continue with the loop (don't increment iteration for retry)
+                                        iteration -= 1
+                                        break
+                                except Exception as fallback_error:
+                                    agent_logger.warning(f"⚠️ Fallback {fallback_provider} also failed: {fallback_error}")
+                                    continue
+                            else:
+                                # All fallbacks exhausted
+                                agent_logger.error(f"❌ All fallback providers exhausted")
+                                yield {"type": "error", "message": "Rate limit exceeded on all providers. Please wait and try again."}
+                                return
+                        else:
+                            yield {"type": "error", "message": f"Rate limit exceeded: {error_str[:100]}"}
+                            return
+                    else:
+                        # Pinned model - all local keys failed, don't fall back to other providers
+                        agent_logger.error(f"❌ Key rotation failed for pinned model {provider}")
+                        yield {"type": "error", "message": f"Rate limit exceeded for your selected model ({provider}). Please try another model or wait."}
+                        return
+                else:
+                    agent_logger.error(f"❌ Agentic stream error: {e}")
+                    yield {"type": "error", "message": str(e)}
+                    return
         
         # Max iterations reached
         log_agentic_max_iterations(max_iterations, iteration)
@@ -1005,5 +1430,4 @@ Follow standard conventions for the format.
 Be thorough but concise.
 Include examples where helpful."""
         }
-        
-        return base_prompt + task_prompts.get(task_type, "")
+        return base_prompt + task_prompts.get(task_type, "") + IMPLICIT_RULES_PROMPT

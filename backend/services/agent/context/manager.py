@@ -138,11 +138,11 @@ class ContextManager:
     
     def record_error(self, error: str):
         """Record error in session."""
-        self.session.errors_encountered.append(error[:200])  # Truncate
+        self.session.errors_encountered.append(error)  # Full error
     
     def record_command(self, command: str):
         """Record command in session."""
-        self.session.commands_run.append(command[:100])  # Truncate
+        self.session.commands_run.append(command)  # Full command
     
     def get_context_for_task(self, task_type: str) -> Dict[str, Any]:
         """
@@ -191,26 +191,23 @@ class ContextManager:
         return "\n".join(lines)
     
     def _build_task_context(self, token_limit: int) -> str:
-        """Build task context string with truncation."""
+        """Build task context string (no file content - user will provide path)."""
         lines = []
         
+        # Note: We don't include file_content here - user will provide file path
+        # and agent will read it if needed. This saves tokens.
+        
         if self.task.current_file:
-            lines.append(f"File: {self.task.current_file} ({self.task.file_language})")
+            lines.append(f"Current file: {self.task.current_file} ({self.task.file_language})")
         
         if self.task.error_message:
-            error = self.task.error_message[:500]  # Truncate errors
-            lines.append(f"Error:\n{error}")
+            lines.append(f"Error:\n{self.task.error_message}")
         
         if self.task.selected_code:
-            code = self._truncate_code(self.task.selected_code, token_limit // 2)
-            lines.append(f"Selected code:\n```\n{code}\n```")
-        elif self.task.file_content:
-            code = self._truncate_code(self.task.file_content, token_limit // 2)
-            lines.append(f"File content:\n```\n{code}\n```")
+            lines.append(f"Selected code:\n```\n{self.task.selected_code}\n```")
         
         if self.task.terminal_output:
-            output = self.task.terminal_output[-500:]  # Last 500 chars
-            lines.append(f"Terminal:\n{output}")
+            lines.append(f"Terminal:\n{self.task.terminal_output}")
         
         return "\n\n".join(lines)
     
@@ -233,13 +230,8 @@ class ContextManager:
         return "\n".join(lines) if lines else ""
     
     def _truncate_code(self, code: str, char_limit: int) -> str:
-        """Truncate code to character limit."""
-        if len(code) <= char_limit:
-            return code
-        
-        # Keep first and last parts
-        half = char_limit // 2
-        return code[:half] + "\n... (truncated) ...\n" + code[-half:]
+        """Return full code (no truncation)."""
+        return code
     
     def _detect_language(self, file_path: str) -> str:
         """Detect language from file extension."""
@@ -256,15 +248,38 @@ class ContextManager:
         return "text"
     
     def _trigger_summarization(self):
-        """Summarize older messages (to be implemented with LLM)."""
-        # For now, just keep last N messages and create simple summary
+        """Summarize older messages into a useful context."""
         old_messages = self.conversation_history[:-self.summarize_threshold]
         
         if old_messages:
-            # Simple summary - just count
+            # Build a more descriptive summary
+            summary_parts = []
+            
+            # Extract key actions from messages
+            for msg in old_messages:
+                content_lower = msg.content.lower()[:200]  # First 200 chars
+                
+                # Look for phase/task completion markers
+                if 'phase' in content_lower and ('complete' in content_lower or 'done' in content_lower):
+                    summary_parts.append(f"Completed phase mentioned in conversation")
+                elif msg.role == 'user' and msg.task_type:
+                    # Summarize what user asked for
+                    if 'implement' in content_lower or 'create' in content_lower:
+                        summary_parts.append(f"User requested implementation/creation")
+                    elif 'fix' in content_lower or 'bug' in content_lower:
+                        summary_parts.append(f"User requested bug fix")
+                    elif 'explain' in content_lower:
+                        summary_parts.append(f"User asked for explanation")
+            
+            # Add file activity
+            if self.session.files_created:
+                summary_parts.append(f"Created: {', '.join(self.session.files_created[-3:])}")
+            if self.session.files_modified:
+                summary_parts.append(f"Modified: {', '.join(self.session.files_modified[-3:])}")
+            
+            # Build final summary
             user_count = sum(1 for m in old_messages if m.role == "user")
-            self.conversation_summary = f"Previous {user_count} exchanges covering: " + \
-                ", ".join(set(m.task_type or "chat" for m in old_messages if m.task_type))
+            self.conversation_summary = f"Previous {user_count} exchanges. " + "; ".join(summary_parts[:5])
             
             # Keep only recent messages
             self.conversation_history = self.conversation_history[-self.summarize_threshold:]

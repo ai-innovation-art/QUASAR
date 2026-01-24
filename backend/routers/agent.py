@@ -62,6 +62,7 @@ class ChatRequest(BaseModel):
     selected_code: Optional[str] = None
     terminal_output: Optional[str] = None
     error_message: Optional[str] = None
+    selected_model: Optional[str] = None  # Format: "provider/model_key" or None for Auto
 
 
 class ChatResponse(BaseModel):
@@ -75,6 +76,8 @@ class ChatResponse(BaseModel):
     tool_calls_count: int = 0
     iterations: int = 1
     error: Optional[str] = None
+
+
 
 
 @router.get("/health")
@@ -93,6 +96,36 @@ async def health_check():
         "service": "ai-agent",
         "providers": cred_manager.get_status(),
         "available_providers": model_router.get_available_providers()
+    }
+
+
+@router.get("/models/list")
+async def list_models():
+    """
+    List all available models from config for user selection.
+    
+    Returns:
+        List of {provider, model_name, display_name, model_key}
+    """
+    from services.agent.config import AgentConfig
+    
+    models = []
+    
+    # Iterate through all providers and their models
+    for provider_name, provider_config in AgentConfig.PROVIDERS.items():
+        if not provider_config.enabled:
+            continue
+            
+        for model_key, model_config in provider_config.models.items():
+            models.append({
+                "provider": provider_name,
+                "model_name": model_config.name,
+                "model_key": model_key,
+                "display_name": f"{provider_name.capitalize()} / {model_config.name}"
+            })
+    
+    return {
+        "models": models
     }
 
 
@@ -170,7 +203,8 @@ async def chat(request: ChatRequest):
             file_content=request.file_content,
             selected_code=request.selected_code,
             terminal_output=request.terminal_output,
-            error_message=request.error_message
+            error_message=request.error_message,
+            selected_model=request.selected_model
         )
         
         agent_logger.info(f"✅ /chat response: task_type={result.task_type}, provider={result.provider}, success={result.success}")
@@ -231,7 +265,8 @@ async def chat_stream(request: ChatRequest):
                 file_content=request.file_content,
                 selected_code=request.selected_code,
                 terminal_output=request.terminal_output,
-                error_message=request.error_message
+                error_message=request.error_message,
+                selected_model=request.selected_model
             ):
                 # SSE format: data: {json}\n\n
                 yield f"data: {json.dumps(chunk)}\n\n"

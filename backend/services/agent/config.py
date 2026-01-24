@@ -51,6 +51,9 @@ class AgentConfig:
                 "reasoning": ModelConfig("gpt-oss:20b-cloud", "ollama"),                # GPT-OSS for reasoning, tools+thinking
                 "agentic": ModelConfig("devstral-small-2:24b-cloud", "ollama"),         # Best for agentic tool calling
                 # "vision": ModelConfig("qwen3-vl:235b-instruct-cloud", "ollama"),        # Vision + 235B reasoning
+                
+                # 🧪 TEST SLOT - Replace model name here for quick testing
+                "test": ModelConfig("glm-4.7:cloud", "ollama"),                         # ← Change this to test any Ollama model
             }
         ),
         "cerebras": ProviderConfig(
@@ -61,6 +64,9 @@ class AgentConfig:
                 "orchestrator": ModelConfig("qwen-3-32b", "cerebras"),
                 "complex": ModelConfig("qwen-3-235b-a22b-instruct-2507", "cerebras"),
                 "code_gen": ModelConfig("zai-glm-4.7", "cerebras"),
+                
+                # 🧪 TEST SLOT - Replace model name here for quick testing
+                "test": ModelConfig("zai-glm-4.7", "cerebras"),                         # ← Change this to test any Cerebras model
             }
         ),
         "groq": ProviderConfig(
@@ -71,7 +77,10 @@ class AgentConfig:
                 "fast": ModelConfig("llama-3.1-8b-instant", "groq"),
                 "versatile": ModelConfig("llama-3.3-70b-versatile", "groq"),
                 "code": ModelConfig("llama-3.1-70b-versatile", "groq"),
-                "reasoning": ModelConfig("gpt-oss-120b", "groq"),  # GPT-OSS 120B for complex reasoning
+                "reasoning": ModelConfig("openai/gpt-oss-120b", "groq"),  # GPT-OSS 120B with openai prefix
+                
+                # 🧪 TEST SLOT - Replace model name here for quick testing
+                "test": ModelConfig("llama-3.1-8b-instant", "groq"),                    # ← Change this to test any Groq model
             }
         ),
         "cloudflare": ProviderConfig(
@@ -90,11 +99,16 @@ class AgentConfig:
     # First is primary, rest are fallbacks
     # NOTE: All Ollama models are now cloud-based (no local download needed)
     TASK_MODELS: Dict[str, List[tuple]] = {
+        # 🧪 TESTING - Uncomment this to test your test models across all tasks
+        # "chat": [("ollama", "test")],
+        # "code_generation": [("cerebras", "test")],
+        # "bug_fixing": [("groq", "test")],
+        
         # Task 1: Conversational Chat
         "chat": [
-            ("ollama", "chat"),              # Primary: qwen3-vl:235b-instruct-cloud
-            ("groq", "fast"),                # Fallback 1: llama-3.1-8b-instant
-            ("cloudflare", "llama_fast"),    # Fallback 2: llama-3.1-8b
+            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
+            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
+            ("ollama", "chat"),              # Fallback 2: qwen3-vl:235b-instruct-cloud
         ],
         
         # Task 2: Code Explanation (Simple)
@@ -113,28 +127,28 @@ class AgentConfig:
         
         # Task 4: Code Generation (Function/Class)
         "code_generation": [
-            ("groq", "reasoning"),           # Primary: gpt-oss-120b
-            ("ollama", "code"),              # Fallback 1: glm-4.7:cloud
-            ("cerebras", "code_gen"),        # Fallback 2: zai-glm-4.7
+            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
+            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
+            ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
         ],
         
         # Task 5: Code Generation (Multi-file/Module)
         "code_generation_multi": [
-            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
+            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
             ("groq", "reasoning"),           # Fallback 1: gpt-oss-120b
             ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
         ],
         
         # Task 6: Bug Detection & Fixing
         "bug_fixing": [
-            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
+            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
             ("groq", "reasoning"),           # Fallback 1: gpt-oss-120b
             ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
         ],
         
         # Task 7: Code Refactoring
         "refactor": [
-            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
+            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
             ("ollama", "code"),              # Fallback 1: glm-4.7:cloud
             ("groq", "versatile"),           # Fallback 2: llama-3.3-70b-versatile
         ],
@@ -170,7 +184,7 @@ class AgentConfig:
     # Agentic Loop Configuration
     MAX_TOOL_ITERATIONS = 30          # Max tool call loops per request (increased for complex tasks)
     TOOL_TIMEOUT_SECONDS = 30         # Timeout per individual tool execution
-    MAX_TOOL_RESULT_LENGTH = 5000     # Truncate tool results beyond this
+    PIP_INSTALL_TIMEOUT = 180         # Extended timeout for pip install commands (2 minutes)
     ENABLE_TOOL_CONFIRMATION = False  # Require user confirmation for dangerous ops
     
     # Task types that should use tools
@@ -181,14 +195,14 @@ class AgentConfig:
         "refactor",
         "test_generation",
         "architecture",
-        "code_explain_simple",        # Added - needs read_file tool
+        "code_explain_simple",       
         "code_explain_complex",
         "chat",
+        "documentation",
     ]
     
-    # Tasks that are read-only (can't modify/create files) - only chat and docs
+    # Tasks that are read-only (can't modify/create files) - only chat
     READ_ONLY_TASKS = [
-        "documentation",
     ]
     
     @classmethod

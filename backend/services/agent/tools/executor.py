@@ -54,7 +54,11 @@ class ToolExecutionResult:
         )
     
     def _format_result(self, result: Any) -> str:
-        """Format tool result as string for LLM."""
+        """Format tool result as string for LLM with context length management."""
+        # Maximum characters per result type to prevent context overflow
+        MAX_FILE_CONTENT_CHARS = 30000  # ~7.5K tokens
+        MAX_OTHER_RESULT_CHARS = 10000  # ~2.5K tokens
+        
         if result is None:
             return "Tool executed successfully (no output)"
         
@@ -63,26 +67,39 @@ class ToolExecutionResult:
             if "error" in result:
                 return f"Error: {result['error']}"
             elif "content" in result:
-                # File content - may be large
+                # File content - truncate if too long
                 content = result.get("content", "")
-                if len(content) > 5000:
-                    return f"File content (truncated):\n{content[:5000]}...\n[Truncated: {len(content)} chars total]"
+                if len(content) > MAX_FILE_CONTENT_CHARS:
+                    truncated = content[:MAX_FILE_CONTENT_CHARS]
+                    remaining = len(content) - MAX_FILE_CONTENT_CHARS
+                    return f"File content (truncated, {remaining} chars remaining):\n{truncated}\n...[TRUNCATED]"
                 return f"File content:\n{content}"
+            elif "is_large_file" in result and result.get("is_large_file"):
+                # Large file metadata - pass through
+                import json
+                return json.dumps(result, indent=2)
             else:
-                # Generic dict formatting
+                # Generic dict formatting with truncation
                 import json
                 try:
-                    return json.dumps(result, indent=2, default=str)
+                    formatted = json.dumps(result, indent=2, default=str)
+                    if len(formatted) > MAX_OTHER_RESULT_CHARS:
+                        truncated = formatted[:MAX_OTHER_RESULT_CHARS]
+                        return f"{truncated}\n...[TRUNCATED - result too long]"
+                    return formatted
                 except:
-                    return str(result)
+                    return str(result)[:MAX_OTHER_RESULT_CHARS]
         
         if isinstance(result, str):
-            # Truncate long strings
-            if len(result) > 5000:
-                return f"{result[:5000]}...\n[Truncated: {len(result)} chars total]"
+            if len(result) > MAX_OTHER_RESULT_CHARS:
+                return result[:MAX_OTHER_RESULT_CHARS] + "\n...[TRUNCATED]"
             return result
         
-        return str(result)
+        result_str = str(result)
+        if len(result_str) > MAX_OTHER_RESULT_CHARS:
+            return result_str[:MAX_OTHER_RESULT_CHARS] + "\n...[TRUNCATED]"
+        return result_str
+
 
 
 class ToolExecutor:
