@@ -10,6 +10,7 @@ class FileTreeManager {
         this.selectedItem = null;
         this.expandedFolders = new Set();
         this.recentFolders = JSON.parse(localStorage.getItem('quasar_recent_folders') || '[]');
+        this.newFiles = new Set(); // Track newly created files for badge display
     }
 
     /**
@@ -60,17 +61,26 @@ class FileTreeManager {
         const input = document.getElementById('folderPathInput');
         const recentList = document.getElementById('recentFoldersList');
 
-        if (!modal || !input || !recentList) return;
+        if (!modal) {
+            console.error('❌ Folder modal not found! Check if folderModalOverlay exists in HTML.');
+            return;
+        }
 
-        // Clear input
-        input.value = this.rootPath || '';
+        // Set input value if exists
+        if (input) {
+            input.value = this.rootPath || '';
+        }
 
-        // Render recent folders
-        this.renderRecentFolders();
+        // Render recent folders if list exists
+        if (recentList) {
+            this.renderRecentFolders();
+        }
 
-        // Show modal
-        modal.style.display = 'flex';
-        input.focus();
+        // Show modal using class like settings modal does
+        modal.classList.add('active');
+        if (input) input.focus();
+
+        console.log('📂 Open folder modal shown');
     }
 
     /**
@@ -129,7 +139,7 @@ class FileTreeManager {
      */
     closeFolderModal() {
         const modal = document.getElementById('folderModalOverlay');
-        if (modal) modal.style.display = 'none';
+        if (modal) modal.classList.remove('active');
     }
 
     /**
@@ -300,6 +310,7 @@ class FileTreeManager {
             const icon = this.getItemIcon(item);
             const languageClass = this.getLanguageClass(item.name);
             const iconColorClass = this.getIconColorClass(item);
+            const badge = this.getFileBadge(item.path);
 
             html += `
                 <div class="tree-item ${isFolder ? 'folder' : 'file'} ${languageClass}" 
@@ -309,6 +320,7 @@ class FileTreeManager {
                     ${isFolder ? `<i data-lucide="${isExpanded ? 'chevron-down' : 'chevron-right'}" class="tree-chevron folder-arrow"></i>` : '<span style="width: 16px; display: inline-block;"></span>'}
                     <span class="file-icon ${iconColorClass}"><i data-lucide="${icon}"></i></span>
                     <span class="tree-item-name">${item.name}</span>
+                    ${badge}
                 </div>
             `;
 
@@ -384,6 +396,69 @@ class FileTreeManager {
     }
 
     /**
+     * Get badge HTML for a file based on its state
+     */
+    getFileBadge(filePath) {
+        // Check if file is new
+        if (this.newFiles.has(filePath)) {
+            return '<span class="tree-badge new" title="New">N</span>';
+        }
+
+        // Check if file is modified (has unsaved changes in editor)
+        if (window.editorManager) {
+            const fileData = window.editorManager.openFiles.get(filePath);
+            if (fileData && fileData.dirty) {
+                return '<span class="tree-badge modified" title="Modified">M</span>';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Mark a file as new (just created)
+     */
+    markAsNew(filePath) {
+        this.newFiles.add(filePath);
+        // Auto-clear after 30 seconds
+        setTimeout(() => {
+            this.newFiles.delete(filePath);
+            this.render(); // Re-render to remove badge
+        }, 30000);
+    }
+
+    /**
+     * Clear new badge from a file
+     */
+    clearNewBadge(filePath) {
+        if (this.newFiles.has(filePath)) {
+            this.newFiles.delete(filePath);
+            this.render();
+        }
+    }
+
+    /**
+     * Update badge for a specific file (called when dirty state changes)
+     */
+    updateFileBadge(filePath) {
+        const treeItem = document.querySelector(`.tree-item[data-path="${CSS.escape(filePath)}"]`);
+        if (!treeItem) return;
+
+        // Remove existing badge
+        const existingBadge = treeItem.querySelector('.tree-badge');
+        if (existingBadge) existingBadge.remove();
+
+        // Add new badge if needed
+        const badge = this.getFileBadge(filePath);
+        if (badge) {
+            const nameSpan = treeItem.querySelector('.tree-item-name');
+            if (nameSpan) {
+                nameSpan.insertAdjacentHTML('afterend', badge);
+            }
+        }
+    }
+
+    /**
      * Attach click handlers to tree items
      */
     attachClickHandlers(container) {
@@ -411,6 +486,45 @@ class FileTreeManager {
             this.toggleFolder(path);
         } else {
             this.openFile(path);
+        }
+    }
+
+    /**
+     * Highlight a file in the tree (called when file is opened programmatically)
+     */
+    highlightFile(filePath) {
+        if (!filePath) return;
+
+        // Remove selection from all items
+        document.querySelectorAll('.tree-item').forEach(item => {
+            item.classList.remove('active');
+        });
+
+        // Try to find matching tree item - handle both exact match and partial match
+        let treeItem = document.querySelector(`.tree-item[data-path="${filePath}"]`);
+
+        // If not found, try with normalized path (replace backslashes)
+        if (!treeItem) {
+            const normalizedPath = filePath.replace(/\\\\/g, '/');
+            treeItem = document.querySelector(`.tree-item[data-path="${normalizedPath}"]`);
+        }
+
+        // Try matching by filename if full path doesn't work
+        if (!treeItem) {
+            const fileName = filePath.split(/[\\\\/]/).pop();
+            document.querySelectorAll('.tree-item').forEach(item => {
+                const itemPath = item.dataset.path || '';
+                if (itemPath.endsWith(fileName) || itemPath.split(/[\\\\/]/).pop() === fileName) {
+                    treeItem = item;
+                }
+            });
+        }
+
+        if (treeItem) {
+            treeItem.classList.add('active');
+            this.selectedItem = treeItem.dataset.path;
+            // Scroll into view if needed
+            treeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
 

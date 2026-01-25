@@ -53,7 +53,7 @@ class AgentConfig:
                 # "vision": ModelConfig("qwen3-vl:235b-instruct-cloud", "ollama"),        # Vision + 235B reasoning
                 
                 # 🧪 TEST SLOT - Replace model name here for quick testing
-                "test": ModelConfig("glm-4.7:cloud", "ollama"),                         # ← Change this to test any Ollama model
+                "test": ModelConfig("deepseek-v3.2:cloud", "ollama"),                         # ← Change this to test any Ollama model
             }
         ),
         "cerebras": ProviderConfig(
@@ -90,6 +90,9 @@ class AgentConfig:
                 "llama": ModelConfig("@cf/meta/llama-3.1-70b-instruct", "cloudflare"),
                 "llama_fast": ModelConfig("@cf/meta/llama-3.1-8b-instruct", "cloudflare"),  # Fast 8B model
                 "qwen": ModelConfig("@cf/qwen/qwen2.5-coder-32b-instruct", "cloudflare"),
+
+                # 🧪 TEST SLOT - Replace model name here for quick testing
+                "test": ModelConfig("@cf/openai/gpt-oss-120b", "cloudflare"), 
             }
         ),
     }

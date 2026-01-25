@@ -99,6 +99,8 @@ class EditorManager {
                 if (fileData) {
                     fileData.dirty = true;
                     this.updateTabDirtyState(filePath, true);
+                    // Update file tree badge
+                    window.fileTreeManager?.updateFileBadge(filePath);
                 }
             }
         });
@@ -274,6 +276,8 @@ class EditorManager {
             this.updateStatusBar(filePath);
             this.updateBreadcrumb(filePath);
             document.getElementById('currentFileName').textContent = this.getFileName(filePath);
+            // Highlight file in tree
+            window.fileTreeManager?.highlightFile(filePath);
         }
     }
 
@@ -315,9 +319,19 @@ class EditorManager {
         fileData.model.dispose();
         this.openFiles.delete(filePath);
 
-        // Remove tab from UI
-        const tab = document.querySelector(`.tab[data-path="${filePath}"]`);
-        if (tab) tab.remove();
+        // Remove tab from UI - use CSS.escape for proper path escaping
+        const escapedPath = CSS.escape(filePath);
+        const tab = document.querySelector(`.tab[data-path="${escapedPath}"]`);
+        if (tab) {
+            tab.remove();
+        } else {
+            // Fallback: try to find by iterating
+            document.querySelectorAll('.tab').forEach(t => {
+                if (t.dataset.path === filePath) {
+                    t.remove();
+                }
+            });
+        }
 
         // UI Updates if needed
         if (!this.activeFileLeft && !this.activeFileRight) {

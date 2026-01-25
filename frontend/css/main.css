@@ -395,6 +395,34 @@ body {
     color: var(--accent-warning);
 }
 
+/* File Tree Badges */
+.tree-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 4px;
+    margin-left: auto;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tree-badge.new {
+    background-color: rgba(46, 160, 67, 0.2);
+    color: #3fb950;
+    border: 1px solid rgba(46, 160, 67, 0.4);
+}
+
+.tree-badge.modified {
+    background-color: rgba(227, 179, 65, 0.2);
+    color: #e3b341;
+    border: 1px solid rgba(227, 179, 65, 0.4);
+}
+
 /* Workspace Root Folder Header */
 .tree-root {
     display: flex;

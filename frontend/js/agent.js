@@ -364,12 +364,13 @@ class AgentManager {
                 console.log(`🔧 Starting tool: ${data.tool}`);
                 const cardId = this.showActionCard(data.tool, data.args || {}, 'running');
 
-                // For file-modifying tools, try to capture "before" state
+                // For file-modifying tools, try to capture "before" state (must await)
                 const modificationTools = ['modify_file', 'patch_file', 'write_to_file', 'create_file'];
                 if (modificationTools.includes(data.tool)) {
                     const filePath = data.args?.path || data.args?.file_path;
-                    if (filePath) {
-                        this.captureBeforeState(cardId, filePath);
+                    if (filePath && cardId) {
+                        // Capture before state immediately (don't await to avoid blocking stream)
+                        this.captureBeforeState(cardId, filePath).catch(err => console.warn('captureBeforeState error:', err));
                     }
                 }
                 break;
@@ -403,6 +404,11 @@ class AgentManager {
                         }
                         console.log(`📝 Auto-reload triggered for: ${absolutePath}`);
                         window.editorManager.reloadFile(absolutePath);
+
+                        // Mark new files with badge
+                        if (data.tool === 'create_file') {
+                            window.fileTreeManager.markAsNew(result.path);
+                        }
                     } else {
                         console.log(`⚠ No path to reload. result:`, result, 'rootPath:', window.fileTreeManager?.rootPath);
                     }
@@ -652,41 +658,8 @@ class AgentManager {
         // Handle diff display for file modifications
         const toolInfo = this.toolState.get(card.id);
         if (status === 'complete' && toolInfo && window.diffViewer) {
-            let afterContent = null;
-
-            // Extract afterContent from result if possible
-            if (result) {
-                let parsedResult = result;
-                if (typeof result === 'string' && (result.startsWith('{') || result.startsWith('['))) {
-                    try { parsedResult = JSON.parse(result); } catch (e) { }
-                }
-
-                if (parsedResult.content) afterContent = parsedResult.content;
-                else if (typeof parsedResult === 'string' && toolName === 'read_file') afterContent = parsedResult;
-            }
-
-            if (afterContent !== null && afterContent !== toolInfo.beforeContent) {
-                const diffBtn = document.createElement('button');
-                diffBtn.className = 'btn-show-diff';
-                diffBtn.innerHTML = '<i data-lucide="diff"></i><span>Show Changes</span>';
-                card.appendChild(diffBtn);
-
-                if (window.lucide) lucide.createIcons();
-
-                let diffContainer = null;
-                diffBtn.addEventListener('click', () => {
-                    if (diffContainer) {
-                        diffContainer.style.display = diffContainer.style.display === 'none' ? 'block' : 'none';
-                        diffBtn.querySelector('span').textContent = diffContainer.style.display === 'none' ? 'Show Changes' : 'Hide Changes';
-                        return;
-                    }
-
-                    diffContainer = document.createElement('div');
-                    diffContainer.innerHTML = window.diffViewer.renderLineDiff(toolInfo.beforeContent, afterContent, toolInfo.filePath);
-                    card.appendChild(diffContainer);
-                    diffBtn.querySelector('span').textContent = 'Hide Changes';
-                });
-            }
+            // Try to get afterContent from result or fetch from API
+            this.getAfterContentAndShowDiff(card, toolInfo, result, toolName);
         }
 
         // Show command output if present
@@ -695,6 +668,60 @@ class AgentManager {
             outputEl.className = 'command-output';
             outputEl.innerHTML = `<pre>${this.escapeHtml(result.substring(0, 500))}</pre>`;
             card.appendChild(outputEl);
+        }
+    }
+
+    /**
+     * Get after content and show diff button
+     */
+    async getAfterContentAndShowDiff(card, toolInfo, result, toolName) {
+        let afterContent = null;
+
+        // Extract afterContent from result if possible
+        if (result) {
+            let parsedResult = result;
+            if (typeof result === 'string' && (result.startsWith('{') || result.startsWith('['))) {
+                try { parsedResult = JSON.parse(result); } catch (e) { }
+            }
+
+            if (parsedResult.content) afterContent = parsedResult.content;
+            else if (typeof parsedResult === 'string' && toolName === 'read_file') afterContent = parsedResult;
+        }
+
+        // If we couldn't get afterContent from result, fetch from file API
+        if (afterContent === null && toolInfo.filePath) {
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/files/read?path=${encodeURIComponent(toolInfo.filePath)}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    afterContent = data.content;
+                }
+            } catch (error) {
+                console.warn('Failed to fetch after content:', error);
+            }
+        }
+
+        if (afterContent !== null && afterContent !== toolInfo.beforeContent) {
+            const diffBtn = document.createElement('button');
+            diffBtn.className = 'btn-show-diff';
+            diffBtn.innerHTML = '<i data-lucide="diff"></i><span>Show Changes</span>';
+            card.appendChild(diffBtn);
+
+            if (window.lucide) lucide.createIcons();
+
+            let diffContainer = null;
+            diffBtn.addEventListener('click', () => {
+                if (diffContainer) {
+                    diffContainer.style.display = diffContainer.style.display === 'none' ? 'block' : 'none';
+                    diffBtn.querySelector('span').textContent = diffContainer.style.display === 'none' ? 'Show Changes' : 'Hide Changes';
+                    return;
+                }
+
+                diffContainer = document.createElement('div');
+                diffContainer.innerHTML = window.diffViewer.renderLineDiff(toolInfo.beforeContent, afterContent, toolInfo.filePath);
+                card.appendChild(diffContainer);
+                diffBtn.querySelector('span').textContent = 'Hide Changes';
+            });
         }
     }
 
@@ -777,6 +804,9 @@ class AgentManager {
                     }
                 });
             });
+
+            // Attach code copy handlers for code blocks in the message
+            this.attachCodeCopyHandlers();
         }
 
         // Store in messages (without think tags)
@@ -1034,6 +1064,11 @@ How can I help you today?`;
      * Attach click handlers to dynamically created copy buttons in messages
      */
     attachCodeCopyHandlers() {
+        // First, ensure lucide icons are rendered in new code blocks
+        if (window.lucide) {
+            lucide.createIcons();
+        }
+
         const containers = document.querySelectorAll('.message-content pre');
         containers.forEach(pre => {
             const btn = pre.querySelector('.code-copy-btn');
@@ -1041,18 +1076,24 @@ How can I help you today?`;
 
             if (btn && codeEl && !btn.dataset.handlerAttached) {
                 btn.dataset.handlerAttached = 'true';
-                btn.addEventListener('click', () => {
-                    const code = codeEl.innerText;
+                btn.style.cursor = 'pointer'; // Ensure clickable
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const code = codeEl.innerText || codeEl.textContent;
                     navigator.clipboard.writeText(code).then(() => {
                         btn.classList.add('copied');
                         btn.innerHTML = '<i data-lucide="check"></i><span>Copied!</span>';
-                        lucide.createIcons();
+                        if (window.lucide) lucide.createIcons();
 
                         setTimeout(() => {
                             btn.classList.remove('copied');
                             btn.innerHTML = '<i data-lucide="copy"></i><span>Copy</span>';
-                            lucide.createIcons();
+                            if (window.lucide) lucide.createIcons();
                         }, 2000);
+                    }).catch(err => {
+                        console.error('Failed to copy:', err);
+                        window.toast?.error('Failed to copy to clipboard');
                     });
                 });
             }
