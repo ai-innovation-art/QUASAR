@@ -1046,6 +1046,15 @@ body {
     height: 16px;
 }
 
+.send-btn.stop-mode {
+    background-color: var(--accent-error);
+}
+
+.send-btn.stop-mode:hover {
+    background-color: #ff5a5a;
+}
+
+
 .chat-hint {
     display: flex;
     justify-content: flex-end;
@@ -1489,19 +1498,19 @@ body {
     position: absolute;
     top: 6px;
     right: 6px;
-    padding: 4px 8px;
+    padding: 5px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-secondary);
     font-size: 11px;
     cursor: pointer;
-    opacity: 0;
+    opacity: 0.4;
     transition: all 0.2s;
     display: flex;
     align-items: center;
-    gap: 4px;
-    z-index: 10;
+    gap: 0;
+    z-index: 100;
 }
 
 .message-content pre:hover .code-copy-btn {
@@ -1516,6 +1525,78 @@ body {
 .code-copy-btn.copied {
     color: var(--accent-success);
     background: rgba(39, 174, 96, 0.1);
+}
+
+/* Suggested Command Block */
+.suggested-command-block {
+    margin: 12px 0;
+    border: 1px solid var(--accent-info);
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: rgba(66, 153, 225, 0.08);
+}
+
+.suggested-command-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background-color: rgba(66, 153, 225, 0.15);
+    border-bottom: 1px solid rgba(66, 153, 225, 0.3);
+}
+
+.suggested-command-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-info);
+}
+
+.suggested-command-label svg {
+    width: 14px;
+    height: 14px;
+}
+
+.copy-command-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background-color: var(--accent-info);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.copy-command-btn:hover {
+    filter: brightness(1.15);
+    transform: scale(1.02);
+}
+
+.copy-command-btn svg {
+    width: 12px;
+    height: 12px;
+}
+
+.suggested-command-code {
+    margin: 0;
+    padding: 12px 14px;
+    background-color: var(--bg-tertiary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-primary);
+    overflow-x: auto;
+}
+
+.suggested-command-code code {
+    background: transparent;
+    padding: 0;
 }
 
 /* Inline Code */
@@ -3526,4 +3607,131 @@ input:checked+.slider:before {
 .history-empty span {
     font-size: 13px;
     opacity: 0.7;
+}
+
+/* ============================================
+   API Keys Settings
+   ============================================ */
+.api-keys-warning {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background-color: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    border-radius: 8px;
+    margin-bottom: 20px;
+    color: var(--accent-warning);
+    font-size: 13px;
+}
+
+.api-keys-warning svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.api-key-input {
+    width: 100%;
+    padding: 10px 14px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    transition: border-color var(--transition-fast);
+}
+
+.api-key-input:focus {
+    outline: none;
+    border-color: var(--accent-info);
+    background-color: var(--bg-active);
+}
+
+.api-key-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.keys-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.key-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.key-row .api-key-input {
+    flex: 1;
+}
+
+.remove-key-btn {
+    padding: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.remove-key-btn:hover {
+    color: var(--accent-error);
+    background: rgba(255, 71, 87, 0.1);
+}
+
+.add-key-btn {
+    margin-top: 4px;
+    font-size: 11px;
+    padding: 6px 10px;
+}
+
+
+.api-keys-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.api-keys-actions .btn-primary,
+.api-keys-actions .btn-secondary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.api-keys-actions svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Stop Mode for Send Button */
+#sendBtn.stop-mode {
+    background-color: var(--accent-error, #ff4757) !important;
+    border-color: var(--accent-error, #ff4757) !important;
+    color: white !important;
+    opacity: 1 !important;
+    cursor: pointer !important;
+}
+
+#sendBtn.stop-mode:hover {
+    background-color: #ff5e6c !important;
+}
+
+#sendBtn.stop-mode svg {
+    fill: white;
 }

@@ -43,17 +43,13 @@ class AgentConfig:
         "ollama": ProviderConfig(
             name="ollama",
             enabled=True,
-            base_url="http://localhost:11434",  # Still uses Ollama API, but with cloud models
+            base_url="http://localhost:11434",
             models={
-                # Cloud models - no local download needed, just run: ollama run model:cloud
-                "chat": ModelConfig("qwen3-vl:235b-instruct-cloud", "ollama"),                              # Fast chat, tools support
-                "code": ModelConfig("glm-4.7:cloud", "ollama"),                         # GLM 4.7 cloud - tools+thinking, 198K context
-                "reasoning": ModelConfig("gpt-oss:20b-cloud", "ollama"),                # GPT-OSS for reasoning, tools+thinking
-                "agentic": ModelConfig("devstral-small-2:24b-cloud", "ollama"),         # Best for agentic tool calling
-                # "vision": ModelConfig("qwen3-vl:235b-instruct-cloud", "ollama"),        # Vision + 235B reasoning
-                
-                # 🧪 TEST SLOT - Replace model name here for quick testing
-                "test": ModelConfig("deepseek-v3.2:cloud", "ollama"),                         # ← Change this to test any Ollama model
+                "glm-4.7:cloud": ModelConfig("glm-4.7:cloud", "ollama"),
+                "gpt-oss:120b-cloud": ModelConfig("gpt-oss:120b-cloud", "ollama"),
+                "qwen3-coder:480b-cloud": ModelConfig("qwen3-coder:480b-cloud", "ollama"),
+                "deepseek-v3.1:671b-cloud": ModelConfig("deepseek-v3.1:671b-cloud", "ollama"),
+                "deepseek-v3.2:cloud": ModelConfig("deepseek-v3.2:cloud", "ollama"),
             }
         ),
         "cerebras": ProviderConfig(
@@ -61,12 +57,8 @@ class AgentConfig:
             enabled=True,
             base_url="https://api.cerebras.ai/v1",
             models={
-                "orchestrator": ModelConfig("qwen-3-32b", "cerebras"),
-                "complex": ModelConfig("qwen-3-235b-a22b-instruct-2507", "cerebras"),
-                "code_gen": ModelConfig("zai-glm-4.7", "cerebras"),
-                
-                # 🧪 TEST SLOT - Replace model name here for quick testing
-                "test": ModelConfig("zai-glm-4.7", "cerebras"),                         # ← Change this to test any Cerebras model
+                "zai-glm-4.7": ModelConfig("zai-glm-4.7", "cerebras"),
+                "qwen-3-235b-a22b-instruct-2507": ModelConfig("qwen-3-235b-a22b-instruct-2507", "cerebras"),
             }
         ),
         "groq": ProviderConfig(
@@ -74,25 +66,18 @@ class AgentConfig:
             enabled=True,
             base_url="https://api.groq.com/openai/v1",
             models={
-                "fast": ModelConfig("llama-3.1-8b-instant", "groq"),
-                "versatile": ModelConfig("llama-3.3-70b-versatile", "groq"),
-                "code": ModelConfig("llama-3.1-70b-versatile", "groq"),
-                "reasoning": ModelConfig("openai/gpt-oss-120b", "groq"),  # GPT-OSS 120B with openai prefix
-                
-                # 🧪 TEST SLOT - Replace model name here for quick testing
-                "test": ModelConfig("llama-3.1-8b-instant", "groq"),                    # ← Change this to test any Groq model
+                "openai/gpt-oss-120b": ModelConfig("openai/gpt-oss-120b", "groq"),
+                "openai/gpt-oss-20b": ModelConfig("openai/gpt-oss-20b", "groq"),
+                "llama-3.3-70b-versatile": ModelConfig("llama-3.3-70b-versatile", "groq"),
             }
         ),
         "cloudflare": ProviderConfig(
             name="cloudflare",
-            enabled=True,
+            enabled=False,  # Skipped 
             models={
-                "llama": ModelConfig("@cf/meta/llama-3.1-70b-instruct", "cloudflare"),
-                "llama_fast": ModelConfig("@cf/meta/llama-3.1-8b-instruct", "cloudflare"),  # Fast 8B model
-                "qwen": ModelConfig("@cf/qwen/qwen2.5-coder-32b-instruct", "cloudflare"),
-
-                # 🧪 TEST SLOT - Replace model name here for quick testing
-                "test": ModelConfig("@cf/openai/gpt-oss-120b", "cloudflare"), 
+                # "@cf/meta/llama-3.1-70b-instruct": ModelConfig("@cf/meta/llama-3.1-70b-instruct", "cloudflare"),
+                # "@cf/meta/llama-3.1-8b-instruct": ModelConfig("@cf/meta/llama-3.1-8b-instruct", "cloudflare"),
+                # "@cf/qwen/qwen2.5-coder-32b-instruct": ModelConfig("@cf/qwen/qwen2.5-coder-32b-instruct", "cloudflare"),
             }
         ),
     }
@@ -100,81 +85,75 @@ class AgentConfig:
     # Task to model mapping (configurable)
     # Format: task_type -> [(provider, model_key), ...]
     # First is primary, rest are fallbacks
-    # NOTE: All Ollama models are now cloud-based (no local download needed)
     TASK_MODELS: Dict[str, List[tuple]] = {
-        # 🧪 TESTING - Uncomment this to test your test models across all tasks
-        # "chat": [("ollama", "test")],
-        # "code_generation": [("cerebras", "test")],
-        # "bug_fixing": [("groq", "test")],
-        
         # Task 1: Conversational Chat
         "chat": [
-            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
-            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
-            ("ollama", "chat"),              # Fallback 2: qwen3-vl:235b-instruct-cloud
+            ("cerebras", "zai-glm-4.7"),
+            ("ollama", "glm-4.7:cloud"),
+            ("groq", "openai/gpt-oss-120b"),
         ],
         
         # Task 2: Code Explanation (Simple)
         "code_explain_simple": [
-            ("ollama", "code"),              # Primary: glm-4.7:cloud
-            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
-            ("cerebras", "code_gen"),        # Fallback 2: zai-glm-4.7
+            ("ollama", "glm-4.7:cloud"),
+            ("groq", "openai/gpt-oss-120b"),
+            ("cerebras", "zai-glm-4.7"),
         ],
         
         # Task 3: Code Explanation (Complex)
         "code_explain_complex": [
-            ("cerebras", "code_gen"),        # Primary: zai-glm-4.7
-            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
-            ("ollama", "chat"),              # Fallback 2: qwen3-vl:235b-instruct-cloud
+            ("groq", "openai/gpt-oss-120b"),
+            ("cerebras", "qwen-3-235b-a22b-instruct-2507"),
+            ("ollama", "qwen3-coder:480b-cloud"),
         ],
         
         # Task 4: Code Generation (Function/Class)
         "code_generation": [
-            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
-            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
-            ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
+            ("cerebras", "zai-glm-4.7"),
+            ("ollama", "glm-4.7:cloud"),
+            ("groq", "openai/gpt-oss-120b"),
         ],
         
         # Task 5: Code Generation (Multi-file/Module)
         "code_generation_multi": [
-            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
-            ("groq", "reasoning"),           # Fallback 1: gpt-oss-120b
-            ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
+            ("cerebras", "zai-glm-4.7"),
+            ("ollama", "qwen3-coder:480b-cloud"),
+            ("groq", "openai/gpt-oss-120b"),
         ],
         
         # Task 6: Bug Detection & Fixing
         "bug_fixing": [
-            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
-            ("groq", "reasoning"),           # Fallback 1: gpt-oss-120b
-            ("ollama", "code"),              # Fallback 2: glm-4.7:cloud
+            ("ollama", "deepseek-v3.1:671b-cloud"),
+            ("cerebras", "qwen-3-235b-a22b-instruct-2507"),
+            ("groq", "openai/gpt-oss-120b"),
         ],
         
         # Task 7: Code Refactoring
         "refactor": [
-            ("cerebras", "code_gen"),         # Primary: zai-glm-4.7 (fast, good at coding)
-            ("ollama", "code"),              # Fallback 1: glm-4.7:cloud
-            ("groq", "versatile"),           # Fallback 2: llama-3.3-70b-versatile
+            ("cerebras", "zai-glm-4.7"),
+            ("ollama", "glm-4.7:cloud"),
+            ("groq", "llama-3.3-70b-versatile"),
         ],
         
         # Task 8: Architecture & Design
         "architecture": [
-            ("ollama", "reasoning"),         # Primary: gpt-oss:20b-cloud
-            ("cerebras", "code_gen"),        # Fallback 1: zai-glm-4.7
-            ("groq", "reasoning"),           # Fallback 2: gpt-oss-120b
+            ("ollama", "deepseek-v3.1:671b-cloud"),
+            ("cerebras", "qwen-3-235b-a22b-instruct-2507"),
+            ("groq", "openai/gpt-oss-120b"),
         ],
         
         # Task 9: Test Generation
         "test_generation": [
-            ("ollama", "chat"),              # Primary: qwen3-vl:235b-instruct-cloud
-            ("groq", "versatile"),           # Fallback 1: llama-3.3-70b-versatile
-            ("cerebras", "orchestrator"),    # Fallback 2: qwen-3-32b
+            ("ollama", "glm-4.7:cloud"),
+            ("cerebras", "zai-glm-4.7"),
+            ("groq", "llama-3.3-70b-versatile"),
         ],
         
         # Task 10: Documentation Generation
         "documentation": [
-            ("ollama", "chat"),              # Primary: qwen3-vl:235b-instruct-cloud
-            ("groq", "fast"),                # Fallback 1: llama-3.1-8b-instant
-            ("cloudflare", "llama_fast"),    # Fallback 2: llama-3.1-8b
+            ("groq", "openai/gpt-oss-20b"),
+            ("ollama", "deepseek-v3.2:cloud"),
+            ("cerebras", "zai-glm-4.7"),
         ],
     }
     
@@ -186,7 +165,7 @@ class AgentConfig:
     
     # Agentic Loop Configuration
     MAX_TOOL_ITERATIONS = 30          # Max tool call loops per request (increased for complex tasks)
-    TOOL_TIMEOUT_SECONDS = 30         # Timeout per individual tool execution
+    TOOL_TIMEOUT_SECONDS = 180         # Timeout per individual tool execution
     PIP_INSTALL_TIMEOUT = 180         # Extended timeout for pip install commands (2 minutes)
     ENABLE_TOOL_CONFIRMATION = False  # Require user confirmation for dangerous ops
     

@@ -206,19 +206,16 @@ NEVER run the same command more than twice.
 NEVER call the same tool repeatedly without explaining why.
 
 ═══════════════════════════════════════════════════════════════
-PROJECT TRACKING (Task.md)
+═══════════════════════════════════════════════════════════════
+PROJECT TRACKING (Task.md) - MANDATORY
 ═══════════════════════════════════════════════════════════════
 
-For multi-file projects:
-- Create or use existing Task.md/Tasks.md to track progress
-- Read Task.md FIRST before any update
-- Use patch_file() for targeted updates (NOT modify_file or create_file):
-  
-  CORRECT: patch_file("Task.md", "- [ ] Setup config", "- [x] Setup config")
-  WRONG: create_file("Task.md", "...only phase 1...")  ← Overwrites everything!
-  
-- patch_file PRESERVES existing content and only changes what you specify
-- Update checkboxes: [ ] → [x] as tasks complete
+For ANY complex or multi-file project, it is MANDATORY to:
+- ALWAYS create a `Tasks.md` (or `task.md`) file at the root to track sub-tasks.
+- READ this file FIRST before starting work to understand current progress.
+- Maintain checkboxes ([ ] -> [x]) as you finish steps.
+- Use `patch_file()` for targeted updates to avoid overwriting the whole file.
+- This file is your shared roadmap with the user.
 
 ═══════════════════════════════════════════════════════════════
 LARGE FILES
@@ -442,18 +439,18 @@ class Orchestrator:
             has_error=has_error
         )
         
-        # Use Cerebras qwen-3-32b for classification (per agent_orchestration.md)
-        agent_logger.debug("Attempting to get Cerebras (qwen-3-32b) for classification...")
-        model = self.model_router.get_model_for_provider("cerebras", "qwen-3-32b")
-        provider = "cerebras"
-        model_name = "qwen-3-32b"
+        # Use Groq llama-3.3-70b-versatile for classification
+        agent_logger.debug("Attempting to get Groq (llama-3.3-70b-versatile) for classification...")
+        model = self.model_router.get_model_for_provider("groq", "llama-3.3-70b-versatile")
+        provider = "groq"
+        model_name = "llama-3.3-70b-versatile"
         
         if model is None:
-            agent_logger.warning("Cerebras not available, trying Groq gpt-oss-120b...")
-            # Fallback to Groq gpt-oss-120b
-            model = self.model_router.get_model_for_provider("groq", "openai/gpt-oss-120b")
-            provider = "groq"
-            model_name = "gpt-oss-120b"
+            agent_logger.warning("Groq not available, trying Cerebras zai-glm-4.7...")
+            # Fallback to Cerebras zai-glm-4.7
+            model = self.model_router.get_model_for_provider("cerebras", "zai-glm-4.7")
+            provider = "cerebras"
+            model_name = "zai-glm-4.7"
         
         if model is None:
             agent_logger.warning("No cloud models available, using keyword fallback")
@@ -736,6 +733,12 @@ When using tools:
 3. Analyze tool results before responding
 4. If a tool fails, try an alternative approach
 5. Provide a clear final response after completing tool operations
+
+IMPORTANT - TERMINAL COMMANDS:
+- BY DEFAULT, use `suggest_command` to suggest commands for the user to run manually
+- ONLY use `run_terminal_command` if the user EXPLICITLY asks you to run/execute something
+- Examples of explicit execution requests: "run this", "execute the code", "start the server for me"
+- For package installs (pip, npm, etc.), ALWAYS use `suggest_command` unless user explicitly says "install for me"
 
 After completing all necessary tool operations, provide your final response to the user.
 """
@@ -1184,13 +1187,35 @@ After completing all necessary tool operations, provide your final response to t
         
         while iteration < max_iterations:
             iteration += 1
+            remaining = max_iterations - iteration
             agent_logger.info(f"🔄 Streaming agentic loop iteration {iteration}/{max_iterations}")
             
-            yield {"type": "iteration", "current": iteration, "max": max_iterations}
+            yield {"type": "iteration", "current": iteration, "max": max_iterations, "remaining": remaining}
+            
+            # Iteration warning: when 1 iteration remains, inject summary request
+            if remaining <= 1:
+                agent_logger.info(f"⚠️ {remaining} iterations remaining - injecting summary reminder")
+                summary_request = f"""
+[SYSTEM: CRITICAL RESOURCE LIMIT]
+Only {remaining} tool iteration remaining!
+You MUST include a "PROGRESS SUMMARY" block in your response:
+- ✅ WHAT IS DONE: (List completed steps)
+- ⏳ WHAT IS PENDING: (List remaining steps)
+- 📋 CONTINUATION DATA: (Briefly describe current state for next session)
+
+You MUST provide this summary NOW as this is your LAST chance to speak.
+"""
+                # Check if we already added a summary request recently to avoid bloating
+                if not any("[SYSTEM: CRITICAL RESOURCE LIMIT]" in getattr(m, 'content', '') for m in current_messages[-2:]):
+                    current_messages.append(SystemMessage(content=summary_request))
+                
+                if remaining == 1:
+                    yield {"type": "iteration_warning", "remaining": remaining, "message": "LAST iteration remaining - summarizing progress"}
             
             try:
                 # Collect full response (can't stream when checking for tool calls)
                 response = await model_with_tools.ainvoke(current_messages)
+
                 
                 if has_tool_calls(response):
                     tool_calls = get_tool_calls(response)

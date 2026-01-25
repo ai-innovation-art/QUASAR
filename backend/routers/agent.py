@@ -8,10 +8,10 @@ Provides endpoints for:
 - WebSocket for real-time interaction
 """
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Body
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Body, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any, AsyncGenerator, List
 import json
 import traceback
 import asyncio
@@ -78,15 +78,40 @@ class ChatResponse(BaseModel):
     error: Optional[str] = None
 
 
+def _apply_user_keys(
+    x_groq_api_keys: Optional[str] = None,
+    x_openai_api_keys: Optional[str] = None,
+    x_anthropic_api_keys: Optional[str] = None,
+    x_cerebras_api_keys: Optional[str] = None,
+    x_ollama_url: Optional[str] = None
+):
+    """Parse and apply user keys from headers to the current context."""
+    user_keys = {}
+    settings = {}
+    
+    try:
+        if x_groq_api_keys:
+            user_keys["groq"] = json.loads(x_groq_api_keys)
+        if x_openai_api_keys:
+            user_keys["openai"] = json.loads(x_openai_api_keys)
+        if x_anthropic_api_keys:
+            user_keys["anthropic"] = json.loads(x_anthropic_api_keys)
+        if x_cerebras_api_keys:
+            user_keys["cerebras"] = json.loads(x_cerebras_api_keys)
+        
+        if x_ollama_url:
+            settings["ollama_url"] = x_ollama_url
+            
+        if user_keys or settings:
+            CredentialManager.set_user_keys(user_keys, settings)
+    except Exception as e:
+        agent_logger.error(f"⚠️ Error parsing user API keys from headers: {e}")
 
 
 @router.get("/health")
 async def health_check():
     """
     Check agent service health and credential status.
-    
-    Returns:
-        Status of all providers and credentials
     """
     cred_manager = CredentialManager()
     model_router = ModelRouter()
@@ -103,9 +128,6 @@ async def health_check():
 async def list_models():
     """
     List all available models from config for user selection.
-    
-    Returns:
-        List of {provider, model_name, display_name, model_key}
     """
     from services.agent.config import AgentConfig
     
@@ -130,12 +152,19 @@ async def list_models():
 
 
 @router.post("/test-model", response_model=TestModelResponse)
-async def test_model(request: TestModelRequest):
+async def test_model(
+    request: TestModelRequest,
+    x_groq_api_keys: Optional[str] = Header(None),
+    x_openai_api_keys: Optional[str] = Header(None),
+    x_anthropic_api_keys: Optional[str] = Header(None),
+    x_cerebras_api_keys: Optional[str] = Header(None),
+    x_ollama_url: Optional[str] = Header(None)
+):
     """
     Test a specific model with a prompt.
-    
-    Useful for verifying credentials and model connectivity.
     """
+    _apply_user_keys(x_groq_api_keys, x_openai_api_keys, x_anthropic_api_keys, x_cerebras_api_keys, x_ollama_url)
+    
     model_router = ModelRouter()
     
     try:
@@ -176,15 +205,19 @@ async def test_model(request: TestModelRequest):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    x_groq_api_keys: Optional[str] = Header(None),
+    x_openai_api_keys: Optional[str] = Header(None),
+    x_anthropic_api_keys: Optional[str] = Header(None),
+    x_cerebras_api_keys: Optional[str] = Header(None),
+    x_ollama_url: Optional[str] = Header(None)
+):
     """
     Process a chat request through the orchestrator.
-    
-    The orchestrator will:
-    1. Classify the task
-    2. Route to appropriate specialist
-    3. Return the response
     """
+    _apply_user_keys(x_groq_api_keys, x_openai_api_keys, x_anthropic_api_keys, x_cerebras_api_keys, x_ollama_url)
+    
     agent_logger.info(f"📨 /chat request: {request.query[:80]}...")
     agent_logger.debug(f"Context: file={request.current_file}, selected={bool(request.selected_code)}, error={bool(request.error_message)}")
     
@@ -208,7 +241,6 @@ async def chat(request: ChatRequest):
         )
         
         agent_logger.info(f"✅ /chat response: task_type={result.task_type}, provider={result.provider}, success={result.success}")
-        agent_logger.debug(f"Response length: {len(result.response)} chars")
         
         return ChatResponse(
             success=result.success,
@@ -236,18 +268,19 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    x_groq_api_keys: Optional[str] = Header(None),
+    x_openai_api_keys: Optional[str] = Header(None),
+    x_anthropic_api_keys: Optional[str] = Header(None),
+    x_cerebras_api_keys: Optional[str] = Header(None),
+    x_ollama_url: Optional[str] = Header(None)
+):
     """
     Stream AI responses in real-time using Server-Sent Events (SSE).
-    
-    Streams:
-    - classification: Task type classification result
-    - token: Individual response tokens
-    - tool_start: Tool execution starting
-    - tool_complete: Tool execution completed
-    - done: Final completion signal
-    - error: Error messages
     """
+    _apply_user_keys(x_groq_api_keys, x_openai_api_keys, x_anthropic_api_keys, x_cerebras_api_keys)
+    
     agent_logger.info(f"📨 /chat/stream request: {request.query[:80]}...")
     
     orchestrator = get_orchestrator()
@@ -258,6 +291,11 @@ async def chat_stream(request: ChatRequest):
     
     async def event_generator() -> AsyncGenerator[str, None]:
         """Generate SSE events from orchestrator stream."""
+        # Note: headers must be applied here too if the generator runs in a different task
+        # But FastAPI AsyncGenerator usually inherits context if handled correctly.
+        # To be safe, we re-apply if needed, but ContextVar should work.
+        _apply_user_keys(x_groq_api_keys, x_openai_api_keys, x_anthropic_api_keys, x_cerebras_api_keys, x_ollama_url)
+
         try:
             async for chunk in orchestrator.process_stream(
                 query=request.query,

@@ -242,6 +242,32 @@ def get_terminal_output(lines: int = 50) -> Dict[str, Any]:
 
 
 @tool
+def suggest_command(command: str, description: str = "") -> Dict[str, Any]:
+    """
+    Suggest a terminal command for the user to run manually.
+    
+    USE THIS BY DEFAULT instead of running commands directly.
+    Only use run_terminal_command if the user EXPLICITLY asks you to execute/run something.
+    
+    Args:
+        command: The shell command to suggest (e.g., "pip install flask", "npm run dev")
+        description: Optional description of what the command does
+        
+    Returns:
+        Dictionary with the suggested command formatted for user display
+    """
+    agent_logger.info(f"💡 Tool: suggest_command({command[:50]}...)")
+    
+    return {
+        "success": True,
+        "type": "suggested_command",
+        "command": command,
+        "description": description or f"Run this command in your terminal",
+        "message": f"Please run this command in your terminal:\n```\n{command}\n```"
+    }
+
+
+@tool
 def clear_terminal_buffer() -> Dict[str, Any]:
     """
     Clear the terminal output buffer.
@@ -286,7 +312,8 @@ def check_command_available(command: str) -> Dict[str, Any]:
 
 # Export all terminal tools
 TERMINAL_TOOLS = [
-    run_terminal_command,
+    suggest_command,  # Default: suggest commands for user to run
+    run_terminal_command,  # Only use when user explicitly asks to run
     run_python_file,
     run_pip_command,
     get_terminal_output,

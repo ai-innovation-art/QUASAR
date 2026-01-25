@@ -385,6 +385,10 @@
                         <i data-lucide="keyboard"></i>
                         <span>Shortcuts</span>
                     </div>
+                    <div class="settings-nav-item" data-target="settings-apikeys">
+                        <i data-lucide="key"></i>
+                        <span>API Keys</span>
+                    </div>
                 </div>
                 <div class="settings-content">
                     <!-- General Settings -->
@@ -499,6 +503,84 @@
                                 <span class="shortcut-desc">Toggle AI Panel</span>
                                 <span class="shortcut-key">Ctrl+/</span>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- API Keys Settings -->
+                    <div class="settings-section" id="settings-apikeys">
+                        <h2>API Keys</h2>
+                        <div class="api-keys-warning">
+                            <i data-lucide="alert-triangle"></i>
+                            <span>Keys are stored in browser localStorage. Use at your own risk.</span>
+                        </div>
+                        <div class="setting-item multi-key-item">
+                            <div class="setting-info">
+                                <label>Groq API Keys</label>
+                                <p>For fast LLM inference (Llama, Mixtral)</p>
+                            </div>
+                            <div class="setting-control">
+                                <div id="groqKeysList" class="keys-list"></div>
+                                <button class="btn-ghost add-key-btn" data-provider="groq">
+                                    <i data-lucide="plus"></i> Add Key
+                                </button>
+                            </div>
+                        </div>
+                        <div class="setting-item multi-key-item">
+                            <div class="setting-info">
+                                <label>OpenAI API Keys</label>
+                                <p>For GPT models (GPT-4, GPT-3.5)</p>
+                            </div>
+                            <div class="setting-control">
+                                <div id="openaiKeysList" class="keys-list"></div>
+                                <button class="btn-ghost add-key-btn" data-provider="openai">
+                                    <i data-lucide="plus"></i> Add Key
+                                </button>
+                            </div>
+                        </div>
+                        <div class="setting-item multi-key-item">
+                            <div class="setting-info">
+                                <label>Anthropic API Keys</label>
+                                <p>For Claude models</p>
+                            </div>
+                            <div class="setting-control">
+                                <div id="anthropicKeysList" class="keys-list"></div>
+                                <button class="btn-ghost add-key-btn" data-provider="anthropic">
+                                    <i data-lucide="plus"></i> Add Key
+                                </button>
+                            </div>
+                        </div>
+                        <div class="setting-item multi-key-item">
+                            <div class="setting-info">
+                                <label>Cerebras API Keys</label>
+                                <p>For Cerebras models</p>
+                            </div>
+                            <div class="setting-control">
+                                <div id="cerebrasKeysList" class="keys-list"></div>
+                                <button class="btn-ghost add-key-btn" data-provider="cerebras">
+                                    <i data-lucide="plus"></i> Add Key
+                                </button>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <label>Ollama URL</label>
+                                <p>Local Ollama server (default: http://localhost:11434)</p>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" id="setting-ollamaUrl" class="api-key-input"
+                                    placeholder="http://localhost:11434">
+                            </div>
+                        </div>
+
+                        <div class="api-keys-actions">
+                            <button class="btn-primary" id="saveApiKeysBtn">
+                                <i data-lucide="save"></i>
+                                Save Keys
+                            </button>
+                            <button class="btn-secondary" id="clearApiKeysBtn">
+                                <i data-lucide="trash-2"></i>
+                                Clear All
+                            </button>
                         </div>
                     </div>
                 </div>

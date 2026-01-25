@@ -50,12 +50,16 @@ class ModelProviders:
         try:
             from langchain_ollama import ChatOllama
             
+            # Use custom URL if provided, otherwise default to local
+            base_url = self.cred_manager.get_setting("ollama_url", "http://localhost:11434")
+            
             model = ChatOllama(
                 model=model_name,
+                base_url=base_url,
                 temperature=temperature,
                 **kwargs
             )
-            logger.info(f"✅ Ollama model created: {model_name}")
+            logger.info(f"✅ Ollama model created at {base_url}: {model_name}")
             return model
         except ImportError:
             logger.error("❌ langchain-ollama not installed")

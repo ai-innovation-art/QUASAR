@@ -9,16 +9,25 @@ Handles:
 """
 
 import os
-from typing import Dict, Optional, Any
+import json
+from typing import Dict, Optional, Any, List
 from dataclasses import dataclass
 from dotenv import load_dotenv
 import logging
+from contextvars import ContextVar
 
 # Setup logger
 logger = logging.getLogger("credentials")
 
 # Load environment variables
 load_dotenv()
+
+# Request-scoped user credentials
+# Maps provider name -> ProviderCredentials instance
+user_credentials_context: ContextVar[Dict[str, Any]] = ContextVar("user_credentials", default={})
+
+# Request-scoped user settings (e.g., Ollama URL)
+user_settings_context: ContextVar[Dict[str, Any]] = ContextVar("user_settings", default={})
 
 
 @dataclass
@@ -49,6 +58,7 @@ class CredentialManager:
     - Multiple keys per provider (for higher rate limits)
     - Round-robin rotation
     - Fallback to next credential when rate limited
+    - Request-scoped user override via contextvars
     """
     
     _instance = None
@@ -67,6 +77,27 @@ class CredentialManager:
         self._initialized = True
         self._providers: Dict[str, ProviderCredentials] = {}
         self._load_credentials()
+    
+    @staticmethod
+    def set_user_keys(provider_keys: Dict[str, List[str]], settings: Dict[str, Any] = None):
+        """Set user keys and settings for the current request context."""
+        ctx_creds = {}
+        for provider, keys in provider_keys.items():
+            if keys:
+                creds = [Credential(key=k) for k in keys if k]
+                if creds:
+                    ctx_creds[provider] = ProviderCredentials(credentials=creds)
+        
+        user_credentials_context.set(ctx_creds)
+        user_settings_context.set(settings or {})
+        
+        if ctx_creds or settings:
+            logger.info(f"🔑 User context set (providers: {list(ctx_creds.keys())}, settings: {list((settings or {}).keys())})")
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """Get a setting from user context or default."""
+        settings = user_settings_context.get()
+        return settings.get(key, default)
     
     def _load_credentials(self):
         """Load credentials from environment variables."""
@@ -107,6 +138,13 @@ class CredentialManager:
             credentials=[Credential(key="local", remaining_quota=999999)]
         )
     
+    def _get_provider_creds(self, provider: str) -> Optional[ProviderCredentials]:
+        """Get provider credentials, checking user context first."""
+        user_creds = user_credentials_context.get()
+        if provider in user_creds:
+            return user_creds[provider]
+        return self._providers.get(provider)
+
     def get_credential(self, provider: str) -> Optional[str]:
         """
         Get current credential for a provider.
@@ -114,14 +152,14 @@ class CredentialManager:
         Returns:
             API key string, or None if no credentials available
         """
-        provider_creds = self._providers.get(provider)
+        provider_creds = self._get_provider_creds(provider)
         if not provider_creds or not provider_creds.credentials:
             return None
         
         current = provider_creds.current_index
         if current < len(provider_creds.credentials):
             cred = provider_creds.credentials[current]
-            if cred.is_active:
+            if b := cred.is_active:
                 return cred.key
         
         return None
@@ -145,7 +183,7 @@ class CredentialManager:
         Returns:
             True if successfully rotated, False if no more credentials
         """
-        provider_creds = self._providers.get(provider)
+        provider_creds = self._get_provider_creds(provider)
         if not provider_creds:
             return False
         
@@ -170,7 +208,7 @@ class CredentialManager:
         if provider == "ollama":
             return True  # Always available (local)
             
-        provider_creds = self._providers.get(provider)
+        provider_creds = self._get_provider_creds(provider)
         if not provider_creds or not provider_creds.credentials:
             return False
             
@@ -179,14 +217,27 @@ class CredentialManager:
     def get_status(self) -> Dict[str, Any]:
         """Get status of all credentials (for health check)."""
         status = {}
+        # Status shows system status, but mentions if user keys are active
+        user_creds = user_credentials_context.get()
+        
         for name, provider_creds in self._providers.items():
             total = len(provider_creds.credentials)
             active = sum(1 for c in provider_creds.credentials if c.is_active)
+            
+            # Check user override
+            has_user_override = name in user_creds
+            if has_user_override:
+                u_total = len(user_creds[name].credentials)
+                u_active = sum(1 for c in user_creds[name].credentials if c.is_active)
+                total = u_total
+                active = u_active
+
             status[name] = {
                 "available": active > 0,
                 "total_keys": total,
                 "active_keys": active,
-                "has_credentials": total > 0
+                "has_credentials": total > 0,
+                "is_user_provided": has_user_override
             }
         return status
     
