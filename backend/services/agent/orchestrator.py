@@ -755,7 +755,7 @@ After completing all necessary tool operations, provide your final response to t
         try:
             if selected_model and selected_model != "Auto":
                 # User selected specific model - NO fallback
-                provider, model_key = selected_model.split("/")
+                provider, model_key = selected_model.split("/", 1)
                 model = self.model_router.get_model_for_provider(provider, model_key)
                 if model is None:
                     raise Exception(f"Could not load selected model: {selected_model}")
@@ -835,7 +835,7 @@ After completing all necessary tool operations, provide your final response to t
         # Get model for this task
         if selected_model and selected_model != "Auto":
             # User selected specific model
-            provider, model_key = selected_model.split("/")
+            provider, model_key = selected_model.split("/", 1)
             model = self.model_router.get_model_for_provider(provider, model_key)
             model_name = model_key
             use_fallback = False
@@ -1093,7 +1093,7 @@ After completing all necessary tool operations, provide your final response to t
         
         # Get model
         if selected_model and selected_model != "Auto":
-            provider, model_key = selected_model.split("/")
+            provider, model_key = selected_model.split("/", 1)
             model = self.model_router.get_model_for_provider(provider, model_key)
             model_name = model_key
             use_fallback = False
@@ -1152,7 +1152,7 @@ After completing all necessary tool operations, provide your final response to t
         tool_executor = ToolExecutor(tools, timeout_seconds=AgentConfig.TOOL_TIMEOUT_SECONDS)
         # Get model
         if selected_model and selected_model != "Auto":
-            provider, model_key = selected_model.split("/")
+            provider, model_key = selected_model.split("/", 1)
             model = self.model_router.get_model_for_provider(provider, model_key)
             model_name = model_key
             use_fallback = False
@@ -1315,7 +1315,7 @@ You MUST provide this summary NOW as this is your LAST chance to speak.
                             # Get fresh model with rotated credentials
                             # If pinned, we need to ensure we get the same model again
                             if selected_model and selected_model != "Auto":
-                                prov, m_key = selected_model.split("/")
+                                prov, m_key = selected_model.split("/", 1)
                                 rotated_model = self.model_router.get_model_for_provider(prov, m_key)
                             else:
                                 rotated_model = self.model_router.get_model(task_type)
