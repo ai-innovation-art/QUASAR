@@ -1,0 +1,26 @@
+# FastAPI
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Pydantic
+pydantic>=2.5.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# LangChain Core
+langchain>=0.1.0
+langchain-core>=0.1.0
+
+# LangChain Model Providers
+langchain-openai>=0.0.5
+langchain-groq>=0.0.1
+langchain-ollama>=0.0.1
+
+# WebSocket support
+websockets>=12.0
+
+# CLI
+typer>=0.9.0
+rich>=13.0.0
