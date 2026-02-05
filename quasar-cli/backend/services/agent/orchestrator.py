@@ -127,20 +127,13 @@ CORE PRINCIPLE: COMMUNICATE, THEN EXECUTE
 
 When you decide to use a tool:
 1. Briefly state your plan (e.g., "I'll search for X...")
-2. Emit the tool call.
-3. IMPORTANT: Do not mix extensive conversational text and tool calls in the same turn if the provider (like Groq) is strict.
+2. Emit the tool call using the proper native tool calling format.
+3. IMPORTANT: Do not mix extensive conversational text and tool calls in the same turn if the provider is strict.
 
-GOOD EXAMPLE:
+EXAMPLE FLOW:
 "I'll read Tasks.md to understand our current progress..."
-[tool call: read_file]
-"I see we've completed Phase 1 and 2. Phase 3 has 4 tasks remaining. 
-Should I start with 'Implement task validation'?"
-
-BAD EXAMPLE:
-[tool call: read_file]
-[tool call: create_file]
-[tool call: run_terminal_command]
-(No explanation, human has no idea what's happening)
+(Native tool call to read_file)
+"I see we've completed Phase 1..."
 
 ═══════════════════════════════════════════════════════════════
 INCREMENTAL DEVELOPMENT: ONE STEP AT A TIME

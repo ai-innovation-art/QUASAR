@@ -36,8 +36,9 @@ app = typer.Typer(
 )
 console = Console()
 
-# Global orchestrator
+# Global orchestrator and selected model
 _orchestrator: Optional[Orchestrator] = None
+_selected_model: Optional[str] = None
 
 
 def get_orchestrator() -> Orchestrator:
@@ -75,7 +76,7 @@ def check_api_keys() -> bool:
     return True
 
 
-async def process_query(query: str, workspace: str) -> None:
+async def process_query(query: str, workspace: str, selected_model: Optional[str] = None) -> None:
     """Process a single query and stream the response."""
     orchestrator = get_orchestrator()
     orchestrator.set_workspace(workspace)
@@ -92,7 +93,7 @@ async def process_query(query: str, workspace: str) -> None:
         task_id = progress.add_task("Thinking...", total=None)
         
         try:
-            async for chunk in orchestrator.process_stream(query=query):
+            async for chunk in orchestrator.process_stream(query=query, selected_model=selected_model):
                 chunk_type = chunk.get("type", "")
                 
                 if chunk_type == "classification":
@@ -160,15 +161,16 @@ async def process_query(query: str, workspace: str) -> None:
             console.print(f"[red]Error: {e}[/red]")
 
 
-def run_repl(workspace: str) -> None:
+def run_repl(workspace: str, selected_model: Optional[str] = None) -> None:
     """Run interactive REPL mode."""
+    model_info = f"\n[dim]Model: {selected_model}[/dim]" if selected_model else ""
     console.print(Panel(
         "[bold cyan]🚀 QUASAR AI Editor[/bold cyan]\n\n"
-        f"[dim]Workspace: {workspace}[/dim]\n\n"
+        f"[dim]Workspace: {workspace}[/dim]"
+        f"{model_info}\n\n"
         "Type your requests, or:\n"
         "  [green]/help[/green]  - Show commands\n"
-        "  [green]/quit[/green]  - Exit\n"
-        "  [green]/clear[/green] - Clear screen",
+        "  [green]/quit[/green]  - Exit",
         border_style="cyan"
     ))
     
@@ -184,14 +186,10 @@ def run_repl(workspace: str) -> None:
             if query.lower() in ["/quit", "/exit", "/q"]:
                 console.print("[dim]Goodbye![/dim]")
                 break
-            elif query.lower() == "/clear":
-                console.clear()
-                continue
             elif query.lower() == "/help":
                 console.print(Panel(
                     "[bold]Commands:[/bold]\n"
                     "  /quit, /exit, /q - Exit REPL\n"
-                    "  /clear - Clear screen\n"
                     "  /help - Show this help\n\n"
                     "[bold]Examples:[/bold]\n"
                     '  "Create a hello.py file"\n'
@@ -204,7 +202,7 @@ def run_repl(workspace: str) -> None:
                 continue
             
             # Process the query
-            asyncio.run(process_query(query, workspace))
+            asyncio.run(process_query(query, workspace, selected_model))
             
         except KeyboardInterrupt:
             console.print("\n[dim]Use /quit to exit[/dim]")
@@ -218,6 +216,7 @@ def main(
     query: Optional[str] = typer.Argument(None, help="Query to process"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="Run in interactive REPL mode"),
     workspace: str = typer.Option(None, "--workspace", "-w", help="Workspace directory (default: current dir)"),
+    model: str = typer.Option(None, "--model", "-m", help="Model to use (format: provider/model-name, e.g., cerebras/qwen-3-32b)"),
 ):
     """
     🚀 QUASAR - AI-powered CLI code editor
@@ -238,10 +237,10 @@ def main(
     
     if interactive or query is None:
         # REPL mode
-        run_repl(workspace)
+        run_repl(workspace, model)
     else:
         # Single command mode
-        asyncio.run(process_query(query, workspace))
+        asyncio.run(process_query(query, workspace, model))
 
 
 if __name__ == "__main__":

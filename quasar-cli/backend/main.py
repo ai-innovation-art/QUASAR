@@ -13,7 +13,7 @@ from logging_config import api_logger
 app = FastAPI(
     title="AI Code Editor API",
     description="Backend API for the AI-powered code editor",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # CORS - Allow frontend to access backend
@@ -42,7 +42,7 @@ def root():
     return {
         "status": "ok",
         "message": "AI Code Editor API is running",
-        "version": "1.0.0"
+        "version": "1.1.0"
     }
 
 @app.get("/api/health")

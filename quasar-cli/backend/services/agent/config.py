@@ -159,9 +159,9 @@ class AgentConfig:
         
         # Task 11: Web & Documentation Research
         "research": [
-            ("groq", "llama-3.3-70b-versatile"),
             ("cerebras", "zai-glm-4.7"),
             ("ollama", "glm-4.7:cloud"),
+            ("groq", "llama-3.3-70b-versatile"),
         ],
     }
     
